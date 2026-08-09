@@ -1,0 +1,28 @@
+.venv/
+.tools/
+.data/
+.secrets/
+.pytest_cache/
+pytest-cache-files-*/
+__pycache__/
+*.pyc
+
+# Generated application and report artifacts
+artifacts/apps/*
+!artifacts/apps/.gitkeep
+artifacts/releases/*
+!artifacts/releases/README.md
+ansible/files/*.war
+ansible/files/test-ears/*.ear
+ansible/dist/
+ansible/collections/ansible_collections/waslab/wasnd/tests/output/
+reports/*
+!reports/.gitkeep
+
+# IBM installation media is licensed and must never be committed.
+artifacts/ibm/*
+!artifacts/ibm/README.md
+
+# Local overrides
+.env
+compose.override.yaml

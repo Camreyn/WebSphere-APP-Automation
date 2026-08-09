@@ -1,0 +1,13 @@
+---
+- name: Require an explicit rolling-restart member list
+  ansible.builtin.assert:
+    that:
+      - was_cluster_members | length > 0
+    fail_msg: was_cluster_members must contain node and server/name values.
+
+- name: Restart cluster members serially
+  ansible.builtin.include_tasks: restart_member.yml
+  loop: "{{ was_cluster_members }}"
+  loop_control:
+    loop_var: was_rolling_member
+    label: "{{ was_rolling_member.node }}/{{ was_rolling_member.name | default(was_rolling_member.server | default('server1')) }}"

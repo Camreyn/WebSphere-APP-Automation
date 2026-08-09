@@ -1,0 +1,12 @@
+---
+was_install_root: /opt/WebSphere/AppServers
+was_dmgr_profile_name: Dmgr01
+was_admin_user: wsadmin
+was_admin_password: ""
+was_dmgr_soap_host: localhost
+was_dmgr_soap_port: 8879
+was_cluster_name: AppCluster01
+was_cluster_members: []
+was_rolling_health_url: ""
+was_rolling_health_retries: 30
+was_rolling_health_delay: 2

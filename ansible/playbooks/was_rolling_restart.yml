@@ -1,0 +1,11 @@
+---
+- name: Restart WebSphere cluster members one at a time
+  hosts: was_dmgr
+  gather_facts: false
+  become: true
+  become_user: was
+  roles:
+    - role: waslab.wasnd.rolling_restart
+      vars:
+        was_dmgr_profile_name: Dmgr01
+        was_rolling_health_url: http://172.29.0.30:8080/was-lab/

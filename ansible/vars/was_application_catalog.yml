@@ -1,0 +1,43 @@
+---
+# Duplicate the sample entry for each workplace application. Operators select
+# only the key; cluster targets and release paths remain source-controlled.
+was_application_catalog:
+  was-lab:
+    display_name: WebSphere ND sample application
+    enabled: true
+    was_name: was-lab
+    cluster: AppCluster01
+    context_root: /was-lab
+    artifact_root: /mnt/was-releases/was-lab
+    artifact_filename: was-lab.war
+    archive_type: war
+    manifest_filename: release.yml
+    maximum_size_mb: 512
+    allow_initial_install: true
+    require_all_members_running: true
+    preflight_health_required: true
+    health_urls:
+      - http://172.29.0.30:8080/was-lab/
+      - http://172.29.0.21:9080/was-lab/
+      - http://172.29.0.22:9080/was-lab/
+    health_expected_status: 200
+    health_expected_text: WebSphere ND 9 Cluster Lab
+    health_validate_certs: false
+    health_retries: 30
+    health_delay: 2
+
+was_release_defaults:
+  staging_root: /var/tmp/waslab-deployments
+  lock_root: /var/tmp/waslab-locks
+  lock_stale_after: 14400
+  state_root: /opt/WebSphere/AppServers/profiles/Dmgr01/.waslab
+  report_root: /tmp/waslab-reports
+  dmgr_profile_name: Dmgr01
+  soap_host: localhost
+  soap_port: 8879
+  smtp_host: ""
+  smtp_port: 25
+  smtp_starttls: false
+  smtp_ssl: false
+  smtp_from_address: was-automation@example.invalid
+  awx_public_url: ""

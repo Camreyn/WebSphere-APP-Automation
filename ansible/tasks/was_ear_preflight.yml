@@ -1,0 +1,172 @@
+---
+- name: Validate release request fields
+  ansible.builtin.assert:
+    that:
+      - was_release_application_key in was_application_catalog
+      - was_release_application_key is match('^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$')
+      - was_release_version is match('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+      - was_release_expected_checksum is match('^[0-9A-Fa-f]{64}$')
+      - was_release_change_ticket | length > 0
+      - was_release_change_ticket | length <= 128
+      - was_release_requested_by | length > 0
+      - was_release_requested_by | length <= 256
+      - was_release_strategy in ['maintenance', 'in_place']
+    fail_msg: The AWX release request contains an invalid or missing survey value.
+
+- name: Select the source-controlled application definition
+  ansible.builtin.set_fact:
+    was_release_app: "{{ was_application_catalog[was_release_application_key] }}"
+
+- name: Require an enabled and complete application definition
+  ansible.builtin.assert:
+    that:
+      - was_release_app.enabled | default(false) | bool
+      - was_release_app.was_name | default('') | length > 0
+      - was_release_app.cluster | default('') | length > 0
+      - was_release_app.artifact_root | default('') is match('^/')
+      - was_release_app.artifact_filename | default('') | length > 0
+      - was_release_app.archive_type | default('') in ['ear', 'war']
+    fail_msg: The selected application catalog entry is disabled or incomplete.
+
+- name: Derive immutable release and state paths
+  ansible.builtin.set_fact:
+    was_release_directory: >-
+      {{ was_release_app.artifact_root.rstrip('/') }}/{{ was_release_version }}
+    was_release_artifact_path: >-
+      {{ was_release_app.artifact_root.rstrip('/') }}/{{ was_release_version }}/{{ was_release_app.artifact_filename }}
+    was_release_manifest_path: >-
+      {{ was_release_app.artifact_root.rstrip('/') }}/{{ was_release_version }}/{{ was_release_app.manifest_filename | default('release.yml') }}
+    was_release_state_root: >-
+      {{ was_release_app.state_root | default(was_release_defaults.state_root) }}
+    was_release_history_path: >-
+      {{ was_release_app.state_root | default(was_release_defaults.state_root) }}/{{ was_release_application_key }}/deployment-history.json
+    was_release_checksum_ledger_path: >-
+      {{ was_release_app.state_root | default(was_release_defaults.state_root) }}/{{ was_release_application_key }}/application-checksums.json
+
+- name: Read the immutable release manifest
+  ansible.builtin.slurp:
+    src: "{{ was_release_manifest_path }}"
+  register: was_release_manifest_raw
+
+- name: Parse the release manifest
+  ansible.builtin.set_fact:
+    was_release_manifest: "{{ was_release_manifest_raw.content | b64decode | from_yaml }}"
+
+- name: Match the manifest to the approved survey request
+  ansible.builtin.assert:
+    that:
+      - was_release_manifest is mapping
+      - was_release_manifest.schema_version | default(0) | int == 1
+      - was_release_manifest.application | string == was_release_application_key
+      - was_release_manifest.version | string == was_release_version
+      - was_release_manifest.filename | string == was_release_app.artifact_filename
+      - was_release_manifest.sha256 | string | lower == was_release_expected_checksum | lower
+    fail_msg: >-
+      The immutable release manifest does not match the selected application,
+      version, filename, and approved SHA-256.
+
+- name: Validate EAR or WAR integrity and checksum
+  waslab.wasnd.release_artifact:
+    artifact_path: "{{ was_release_artifact_path }}"
+    allowed_root: "{{ was_release_app.artifact_root }}"
+    expected_checksum: "{{ was_release_expected_checksum }}"
+    expected_extension: "{{ was_release_app.archive_type }}"
+    maximum_size_mb: "{{ was_release_app.maximum_size_mb | default(4096) }}"
+  register: was_release_artifact
+
+- name: Check for another deployment of this application
+  waslab.wasnd.release_lock:
+    name: "{{ was_release_app.was_name }}"
+    state: status
+    lock_root: "{{ was_release_defaults.lock_root }}"
+    stale_after: "{{ was_release_defaults.lock_stale_after }}"
+  register: was_release_existing_lock
+
+- name: Reject concurrent or abandoned deployment locks
+  ansible.builtin.assert:
+    that:
+      - not was_release_existing_lock.locked
+    fail_msg: >-
+      A deployment lock already exists for {{ was_release_app.was_name }}.
+      Owner={{ (was_release_existing_lock.lock | default({}, true)).owner | default('unknown') }},
+      age={{ was_release_existing_lock.age_seconds | default('unknown') }} seconds,
+      stale={{ was_release_existing_lock.stale | default(false) }}.
+
+- name: Read Dmgr cell and cluster health
+  waslab.wasnd.cell_info:
+  register: was_release_cell
+
+- name: Select the cataloged target cluster
+  ansible.builtin.set_fact:
+    was_release_matching_clusters: >-
+      {{ was_release_cell.facts.clusters |
+         selectattr('name', 'equalto', was_release_app.cluster) | list }}
+
+- name: Require exactly one configured target cluster
+  ansible.builtin.assert:
+    that:
+      - was_release_matching_clusters | length == 1
+    fail_msg: >-
+      The cataloged target cluster {{ was_release_app.cluster }} was not found
+      exactly once in the connected cell.
+
+- name: Save the target cluster snapshot
+  ansible.builtin.set_fact:
+    was_release_target_cluster: "{{ was_release_matching_clusters[0] }}"
+    was_release_application_installed: >-
+      {{ was_release_app.was_name in was_release_cell.facts.applications }}
+
+- name: Require the application to exist unless initial installation is approved
+  ansible.builtin.assert:
+    that:
+      - >-
+        was_release_application_installed or
+        (was_release_app.allow_initial_install | default(false) | bool)
+    fail_msg: >-
+      {{ was_release_app.was_name }} is not installed and its application
+      catalog entry does not authorize initial installation.
+
+- name: Require every configured cluster member to be running
+  ansible.builtin.assert:
+    that:
+      - >-
+        'STARTED' in (item.state | upper) or
+        'RUNNING' in (item.state | upper)
+    fail_msg: >-
+      Cluster member {{ item.node }}/{{ item.name }} is not healthy before the
+      release. Reported state={{ item.state }}.
+  loop: "{{ was_release_target_cluster.members }}"
+  loop_control:
+    label: "{{ item.node }}/{{ item.name }}"
+  when: was_release_app.require_all_members_running | default(true) | bool
+
+- name: Read the last successful deployment record
+  waslab.wasnd.release_record:
+    application: "{{ was_release_app.was_name }}"
+    operation: get
+    path: "{{ was_release_history_path }}"
+  register: was_release_record
+
+- name: Determine change and rollback availability
+  ansible.builtin.set_fact:
+    was_release_rollback_record: "{{ was_release_record.current | default(None) }}"
+    was_release_change_required: >-
+      {{ was_release_force | bool or
+         not was_release_record.current or
+         (was_release_record.current.checksum | default('') | lower !=
+          was_release_artifact.checksum | lower) }}
+    was_release_rollback_available: >-
+      {{ was_release_record.current is mapping and
+         (was_release_record.current | default({}, true)).artifact_path | default('') | length > 0 and
+         (was_release_record.current | default({}, true)).checksum | default('') is match('^[0-9A-Fa-f]{64}$') }}
+
+- name: Probe the currently deployed application before approval
+  ansible.builtin.include_tasks: was_ear_health.yml
+  when:
+    - was_release_application_installed | bool
+    - was_release_app.preflight_health_required | default(true) | bool
+    - was_release_app.health_urls | default([]) | length > 0
+
+- name: Save preflight endpoint results
+  ansible.builtin.set_fact:
+    was_release_preflight_health: "{{ was_release_health_results | default({}) }}"

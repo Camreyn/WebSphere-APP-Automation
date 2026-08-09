@@ -1,0 +1,10 @@
+.git
+.venv
+.tools
+.data
+.secrets
+.pytest_cache
+reports
+artifacts/apps
+**/__pycache__
+**/*.pyc

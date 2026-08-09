@@ -1,0 +1,17 @@
+---
+test_ears:
+  - key: orders-test
+    display_name: Orders Test Application
+    context_root: /orders-test
+    accent_color: "#2563eb"
+    description: Simulates an order-management application packaged as a Java EE EAR.
+  - key: billing-test
+    display_name: Billing Test Application
+    context_root: /billing-test
+    accent_color: "#059669"
+    description: Simulates a billing application packaged as a Java EE EAR.
+  - key: claims-test
+    display_name: Claims Test Application
+    context_root: /claims-test
+    accent_color: "#dc2626"
+    description: Simulates a claims-processing application packaged as a Java EE EAR.

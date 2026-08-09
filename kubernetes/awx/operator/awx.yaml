@@ -1,0 +1,52 @@
+apiVersion: awx.ansible.com/v1beta1
+kind: AWX
+metadata:
+  name: was-lab
+  namespace: awx
+  labels:
+    app.kubernetes.io/part-of: wasnd-lab
+spec:
+  image: quay.io/ansible/awx
+  image_version: 24.6.1
+  image_pull_policy: IfNotPresent
+  admin_user: admin
+  admin_password_secret: was-lab-awx-admin-password
+  secret_key_secret: was-lab-awx-secret-key
+  service_type: nodeport
+  nodeport_port: 32000
+  projects_persistence: false
+  postgres_storage_class: standard
+  postgres_storage_requirements:
+    requests:
+      storage: 8Gi
+  postgres_data_volume_init: true
+  csrf_cookie_secure: "false"
+  session_cookie_secure: "false"
+  web_resource_requirements:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  task_resource_requirements:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 3Gi
+  ee_resource_requirements:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  postgres_resource_requirements:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi

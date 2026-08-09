@@ -1,0 +1,32 @@
+---
+all:
+  vars:
+    ansible_user: ansible
+    ansible_python_interpreter: /usr/bin/python3
+    was_install_root: /opt/WebSphere/AppServers
+    was_admin_user: wsadmin
+    was_cell_name: LabCell01
+    was_cluster_name: AppCluster01
+    was_server_name: server1
+    was_cluster_members:
+      - node: Node01
+        server: server1
+      - node: Node02
+        server: server1
+  children:
+    was_hosts:
+      children:
+        was_dmgr:
+        was_nodes:
+    was_dmgr:
+      hosts:
+        was-dmgr:
+          ansible_host: 172.29.0.20
+    was_nodes:
+      hosts:
+        was-node1:
+          ansible_host: 172.29.0.21
+          was_node_name: Node01
+        was-node2:
+          ansible_host: 172.29.0.22
+          was_node_name: Node02

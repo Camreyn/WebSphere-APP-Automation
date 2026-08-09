@@ -1,0 +1,17 @@
+---
+- name: Start the WebSphere application cluster
+  hosts: was_dmgr
+  gather_facts: false
+  become: true
+  become_user: was
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: Dmgr01
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+  tasks:
+    - name: Ensure the cluster is started
+      waslab.wasnd.cluster:
+        name: "{{ was_cluster_name }}"
+        state: started

@@ -1,0 +1,21 @@
+---
+- name: Set cluster-member JVM heap sizes
+  hosts: was_dmgr
+  gather_facts: false
+  become: true
+  become_user: was
+  vars:
+    requested_initial_heap_mb: "{{ initial_heap_mb | default(256) }}"
+    requested_maximum_heap_mb: "{{ maximum_heap_mb | default(768) }}"
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: Dmgr01
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+  tasks:
+    - name: Configure cluster-member heap sizes
+      waslab.wasnd.jvm_heap:
+        cluster: "{{ was_cluster_name }}"
+        initial_heap_mb: "{{ requested_initial_heap_mb }}"
+        maximum_heap_mb: "{{ requested_maximum_heap_mb }}"

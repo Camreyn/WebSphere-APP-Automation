@@ -1,0 +1,14 @@
+---
+was_install_root: /opt/WebSphere/AppServers
+was_os_user: was
+was_os_group: was
+was_node_profile_name: AppSrv01
+was_node_name: Node01
+was_cell_name: LabCell01
+was_dmgr_host: was-dmgr
+was_dmgr_soap_port: 8879
+was_admin_user: wsadmin
+was_admin_password: ""
+was_node_host_name: "{{ inventory_hostname }}"
+was_systemd_enabled: false
+was_node_systemd_service_name: "was-nodeagent-{{ was_node_profile_name | lower }}"

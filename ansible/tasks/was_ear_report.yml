@@ -1,0 +1,185 @@
+---
+- name: Build the verbose release report
+  ansible.builtin.set_fact:
+    was_release_report: |-
+      WebSphere clustered application release report
+      ================================================
+      Status: {{ was_release_status | default('UNKNOWN') }}
+      Phase: {{ was_release_phase | default('unknown') }}
+      Application key: {{ was_release_application_key | default('unknown') }}
+      WebSphere application: {{ was_release_app.was_name | default('unknown') }}
+      Version: {{ was_release_version | default('unknown') }}
+      Cluster: {{ was_release_app.cluster | default('unknown') }}
+      Strategy: {{ was_release_strategy | default('unknown') }}
+      Change/request: {{ was_release_change_ticket | default('unknown') }}
+      Requested by: {{ was_release_requested_by | default('unknown') }}
+      AWX job ID: {{ awx_job_id | default(tower_job_id | default('n/a')) }}
+      AWX workflow job ID: {{ awx_workflow_job_id | default(tower_workflow_job_id | default('n/a')) }}
+      AWX URL: {{ was_awx_public_url | default(was_release_defaults.awx_public_url | default('')) }}
+      Started: {{ was_release_started_at | default('unknown') }}
+      Reported: {{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}
+
+      Artifact
+      --------
+      Path: {{ was_release_artifact_path | default('not resolved') }}
+      Expected SHA-256: {{ was_release_expected_checksum | default('unknown') }}
+      Actual SHA-256: {{ was_release_artifact.checksum | default('not validated') }}
+      Size: {{ was_release_artifact.size | default('unknown') }} bytes
+      Archive entries: {{ was_release_artifact.entry_count | default('unknown') }}
+      Manifest source commit: {{ was_release_manifest.source_commit | default('not supplied') }}
+      Manifest build time: {{ was_release_manifest.built_at | default('not supplied') }}
+      Release notes: {{ was_release_notes | default(was_release_manifest.release_notes | default('')) }}
+
+      Preflight cell snapshot
+      -----------------------
+      {{ was_release_cell.facts | default({}) | to_nice_json }}
+
+      Deployment result
+      -----------------
+      Change required: {{ was_release_change_required | default('unknown') }}
+      Application operation:
+      {{ was_release_application_result | default({}) | to_nice_json }}
+      Node synchronization:
+      {{ was_release_sync_result | default({}) | to_nice_json }}
+      Health checks:
+      {{ was_release_post_health | default(was_release_preflight_health | default({})) | to_nice_json }}
+
+      Rollback
+      --------
+      Available before deployment: {{ was_release_rollback_available | default(false) }}
+      Requested automatically: {{ was_release_auto_rollback | default(false) }}
+      Outcome: {{ was_release_rollback_outcome | default('not needed') }}
+      Previous release:
+      {{ was_release_rollback_record | default({}) | to_nice_json }}
+      Rollback operation:
+      {{ was_release_rollback_result | default({}) | to_nice_json }}
+
+      Error detail
+      ------------
+      {{ was_release_error | default({}) | to_nice_json }}
+
+- name: Select a controller-local report directory
+  ansible.builtin.set_fact:
+    was_release_report_directory: >-
+      {{ (lookup('env', 'AWX_ISOLATED_DATA_DIR') |
+          default(was_release_defaults.report_root, true)) }}/waslab-release-reports
+  delegate_to: localhost
+  become: false
+
+- name: Create a filesystem-safe report basename
+  ansible.builtin.set_fact:
+    was_release_report_basename: >-
+      {{ (was_release_application_key | default('unknown') |
+          regex_replace('[^A-Za-z0-9_.-]', '_')) }}-{{
+         (was_release_version | default('unknown') |
+          regex_replace('[^A-Za-z0-9_.-]', '_')) }}-{{
+         (awx_job_id | default(tower_job_id | default('local')) | string |
+          regex_replace('[^A-Za-z0-9_.-]', '_')) }}
+  delegate_to: localhost
+  become: false
+
+- name: Create the controller-local report directory
+  ansible.builtin.file:
+    path: "{{ was_release_report_directory }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Persist the verbose release report
+  ansible.builtin.copy:
+    content: "{{ was_release_report }}\n"
+    dest: "{{ was_release_report_directory }}/{{ was_release_report_basename }}.txt"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  register: was_release_report_file
+
+- name: Publish a concise result as AWX job artifacts
+  ansible.builtin.set_stats:
+    data:
+      was_release_status: "{{ was_release_status }}"
+      was_release_application: "{{ was_release_application_key | default('unknown') }}"
+      was_release_version: "{{ was_release_version | default('unknown') }}"
+      was_release_change_ticket: "{{ was_release_change_ticket | default('unknown') }}"
+      was_release_report_file: "{{ was_release_report_file.dest }}"
+      was_release_report: "{{ was_release_report }}"
+    per_host: false
+  delegate_to: localhost
+  become: false
+
+- name: Normalize requested email recipients
+  ansible.builtin.set_fact:
+    was_release_email_recipients: >-
+      {{ (was_release_notification_email_to | default('') | regex_replace(';', ',')).split(',') |
+         map('trim') | reject('equalto', '') | list }}
+
+- name: Send the detailed release report through the protected SMTP credential
+  waslab.wasnd.smtp_report:
+    host: "{{ was_smtp_host | default(was_release_defaults.smtp_host) }}"
+    port: "{{ was_smtp_port | default(was_release_defaults.smtp_port) | int }}"
+    username: "{{ was_smtp_username | default(omit, true) }}"
+    password: "{{ was_smtp_password | default(omit, true) }}"
+    starttls: "{{ was_smtp_starttls | default(was_release_defaults.smtp_starttls) | bool }}"
+    ssl: "{{ was_smtp_ssl | default(was_release_defaults.smtp_ssl) | bool }}"
+    from_address: >-
+      {{ was_smtp_from_address | default(was_release_defaults.smtp_from_address) }}
+    to: "{{ was_release_email_recipients }}"
+    subject: >-
+      [WAS][{{ was_release_status }}] {{ was_release_application_key | default('unknown') }}
+      {{ was_release_version | default('unknown') }} ({{ was_release_change_ticket | default('unknown') }})
+    body: "{{ was_release_report }}"
+    attachments:
+      - "{{ was_release_report_file.dest }}"
+  delegate_to: localhost
+  become: false
+  register: was_release_email_result
+  ignore_errors: true
+  when:
+    - was_release_send_email | default(true) | bool
+    - was_smtp_host | default(was_release_defaults.smtp_host) | length > 0
+    - was_release_email_recipients | length > 0
+
+- name: Explain why email delivery was skipped
+  ansible.builtin.debug:
+    msg: >-
+      SMTP notification skipped. Attach a WebSphere SMTP Relay credential,
+      supply recipients, and leave Send email enabled. The full report remains
+      in the AWX job artifacts and its working copy is
+      {{ was_release_report_file.dest }}.
+  when: >-
+    not (was_release_send_email | default(true) | bool) or
+    (was_smtp_host | default(was_release_defaults.smtp_host) | length == 0) or
+    (was_release_email_recipients | length == 0)
+
+- name: Report SMTP delivery failures without hiding the deployment result
+  ansible.builtin.debug:
+    msg: >-
+      SMTP delivery failed: {{ was_release_email_result.msg | default(was_release_email_result.error | default('unknown error')) }}.
+      The deployment status remains {{ was_release_status }} and the report is
+      retained in the AWX job artifacts.
+  when:
+    - was_release_email_result is defined
+    - was_release_email_result.failed | default(false) | bool
+
+- name: Publish SMTP delivery state as AWX job artifacts
+  ansible.builtin.set_stats:
+    data:
+      was_release_email:
+        requested: "{{ was_release_send_email | default(true) | bool }}"
+        recipients: "{{ was_release_email_recipients }}"
+        attempted: >-
+          {{ was_release_email_result is defined and
+             not (was_release_email_result.skipped | default(false) | bool) }}
+        delivered: >-
+          {{ was_release_email_result is defined and
+             not (was_release_email_result.skipped | default(false) | bool) and
+             not (was_release_email_result.failed | default(false) | bool) }}
+        error_type: >-
+          {{ was_release_email_result.error_type | default('') }}
+        error: >-
+          {{ was_release_email_result.error |
+             default(was_release_email_result.msg | default('')) }}
+    per_host: false
+  delegate_to: localhost
+  become: false

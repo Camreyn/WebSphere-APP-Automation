@@ -1,0 +1,6 @@
+---
+was_install_root: /opt/WebSphere/AppServers
+was_profile_name: AppSrv01
+was_os_user: was
+was_log_archive_path: "/var/tmp/{{ inventory_hostname }}-websphere-logs.tar.gz"
+was_log_destination: "{{ lookup('env', 'AWX_ISOLATED_DATA_DIR') | default('/runner/artifacts', true) }}/collected-logs/"

@@ -1,0 +1,112 @@
+---
+- name: Install and verify several Java EE test EARs on WebSphere Base
+  hosts: was_base
+  gather_facts: false
+  become: true
+  become_user: was
+  vars:
+    base_ledger: "{{ was_install_root }}/profiles/{{ was_profile_name }}/.waslab/application-checksums.json"
+    base_test_ears:
+      - name: orders-test
+        local: "{{ playbook_dir }}/../files/test-ears/orders-test.ear"
+        remote: /var/tmp/waslab-orders-test.ear
+        context_root: /orders-test
+        expected_text: Orders Test Application
+      - name: billing-test
+        local: "{{ playbook_dir }}/../files/test-ears/billing-test.ear"
+        remote: /var/tmp/waslab-billing-test.ear
+        context_root: /billing-test
+        expected_text: Billing Test Application
+      - name: claims-test
+        local: "{{ playbook_dir }}/../files/test-ears/claims-test.ear"
+        remote: /var/tmp/waslab-claims-test.ear
+        context_root: /claims-test
+        expected_text: Claims Test Application
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: "{{ was_profile_name }}"
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+      host: "{{ was_soap_host }}"
+      port: "{{ was_soap_port }}"
+  tasks:
+    - name: Inspect controller-local test EAR artifacts
+      ansible.builtin.stat:
+        path: "{{ item.local }}"
+      loop: "{{ base_test_ears }}"
+      delegate_to: localhost
+      become: false
+      register: base_test_ear_artifacts
+
+    - name: Require every generated test EAR
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "Missing {{ item.item.local }}; run tools/build_test_ears.py first."
+      loop: "{{ base_test_ear_artifacts.results }}"
+
+    - name: Stage and converge the test applications
+      block:
+        - name: Copy test EARs to the WebSphere host
+          ansible.builtin.copy:
+            src: "{{ item.local }}"
+            dest: "{{ item.remote }}"
+            owner: was
+            group: root
+            mode: "0640"
+          loop: "{{ base_test_ears }}"
+
+        - name: Install or checksum-update test EARs through genuine wsadmin
+          waslab.wasnd.application:
+            name: "{{ item.name }}"
+            src: "{{ item.remote }}"
+            context_root: "{{ item.context_root }}"
+            virtual_host: default_host
+            ledger_path: "{{ base_ledger }}"
+            state: present
+          loop: "{{ base_test_ears }}"
+          register: base_test_ear_deployments
+
+        - name: Start test EARs through genuine wsadmin
+          waslab.wasnd.application:
+            name: "{{ item.name }}"
+            ledger_path: "{{ base_ledger }}"
+            state: started
+          loop: "{{ base_test_ears }}"
+          register: base_test_ear_starts
+
+        - name: Require every test application to be running
+          ansible.builtin.assert:
+            that:
+              - item.after.installed
+              - item.after.running
+            fail_msg: "{{ item.item.name }} did not reach a running state."
+          loop: "{{ base_test_ear_starts.results }}"
+      always:
+        - name: Remove staged test EARs
+          ansible.builtin.file:
+            path: "{{ item.remote }}"
+            state: absent
+          loop: "{{ base_test_ears }}"
+
+    - name: Verify every test application endpoint
+      ansible.builtin.uri:
+        url: "http://172.29.0.40:9080{{ item.context_root }}/"
+        return_content: true
+        status_code: 200
+      loop: "{{ base_test_ears }}"
+      delegate_to: localhost
+      become: false
+      register: base_test_ear_health
+      retries: 10
+      delay: 2
+      until:
+        - base_test_ear_health.status == 200
+        - item.expected_text in base_test_ear_health.content
+
+    - name: Display installed test applications
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item.name }} is running at
+          http://172.29.0.40:9080{{ item.item.context_root }}/
+      loop: "{{ base_test_ear_health.results }}"

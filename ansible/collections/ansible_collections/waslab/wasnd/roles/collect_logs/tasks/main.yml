@@ -1,0 +1,26 @@
+---
+- name: Create a compressed WebSphere profile log archive
+  ansible.builtin.command:
+    argv:
+      - tar
+      - -czf
+      - "{{ was_log_archive_path }}"
+      - -C
+      - "{{ was_install_root }}/profiles/{{ was_profile_name }}"
+      - logs
+  become: true
+  become_user: "{{ was_os_user }}"
+  changed_when: true
+
+- name: Fetch the WebSphere log archive
+  ansible.builtin.fetch:
+    src: "{{ was_log_archive_path }}"
+    dest: "{{ was_log_destination }}"
+    flat: true
+
+- name: Remove the remote WebSphere log archive
+  ansible.builtin.file:
+    path: "{{ was_log_archive_path }}"
+    state: absent
+  become: true
+  become_user: "{{ was_os_user }}"

@@ -1,0 +1,291 @@
+---
+- name: Deploy an approved immutable EAR or WAR to a WebSphere cluster
+  hosts: was_dmgr
+  gather_facts: false
+  become: true
+  become_user: was
+  vars_files:
+    - ../vars/was_application_catalog.yml
+  vars:
+    was_release_application_key: "{{ deployment_application | default('') }}"
+    was_release_version: "{{ deployment_version | default('') }}"
+    was_release_expected_checksum: "{{ deployment_sha256 | default('') }}"
+    was_release_change_ticket: "{{ change_ticket | default('') }}"
+    was_release_requested_by: "{{ requested_by | default('') }}"
+    was_release_notification_email_to: "{{ notification_email_to | default('') }}"
+    was_release_strategy: "{{ deployment_strategy | default('maintenance') }}"
+    was_release_force: "{{ force_deploy | default(false) | bool }}"
+    was_release_auto_rollback: "{{ auto_rollback | default(true) | bool }}"
+    was_release_send_email: "{{ send_email | default(true) | bool }}"
+    was_release_notes: "{{ release_notes | default('') }}"
+    was_release_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    was_release_run_id: >-
+      {{ awx_job_id | default(tower_job_id | default(now(utc=true, fmt='%Y%m%dT%H%M%SZ'))) }}
+    was_release_lock_owner: >-
+      awx-{{ awx_job_id | default(tower_job_id | default('local')) }}-{{ change_ticket | default('unknown') }}
+    was_awx_public_url: "{{ awx_public_url | default(was_release_defaults.awx_public_url) }}"
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: "{{ was_release_defaults.dmgr_profile_name }}"
+      host: "{{ was_release_defaults.soap_host }}"
+      port: "{{ was_release_defaults.soap_port }}"
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+  tasks:
+    - name: Initialize deployment reporting and cleanup state
+      ansible.builtin.set_fact:
+        was_release_status: DEPLOYING
+        was_release_phase: preflight
+        was_release_error: {}
+        was_release_lock_acquired: false
+        was_release_deployment_started: false
+        was_release_rollback_outcome: not needed
+        was_release_staged_path: ""
+        was_release_rollback_staged_path: ""
+
+    - name: Execute the approved release with rollback and reporting
+      block:
+        - name: Repeat preflight after approval to prevent artifact substitution
+          ansible.builtin.include_tasks: ../tasks/was_ear_preflight.yml
+
+        - name: Acquire the application deployment lock
+          waslab.wasnd.release_lock:
+            name: "{{ was_release_app.was_name }}"
+            state: acquired
+            owner: "{{ was_release_lock_owner }}"
+            lock_root: "{{ was_release_defaults.lock_root }}"
+            stale_after: "{{ was_release_defaults.lock_stale_after }}"
+            metadata:
+              application_key: "{{ was_release_application_key }}"
+              version: "{{ was_release_version }}"
+              change_ticket: "{{ was_release_change_ticket }}"
+              requested_by: "{{ was_release_requested_by }}"
+              awx_job_id: "{{ awx_job_id | default(tower_job_id | default('n/a')) }}"
+          register: was_release_lock
+
+        - name: Remember that this job owns the deployment lock
+          ansible.builtin.set_fact:
+            was_release_lock_acquired: true
+
+        - name: Create the protected staging directory
+          ansible.builtin.file:
+            path: "{{ was_release_defaults.staging_root }}"
+            state: directory
+            mode: "0700"
+
+        - name: Derive the protected staging path
+          ansible.builtin.set_fact:
+            was_release_staged_path: >-
+              {{ was_release_defaults.staging_root }}/{{ was_release_application_key }}-{{ was_release_version }}-{{ was_release_run_id }}.{{ was_release_app.archive_type }}
+
+        - name: Stage the validated archive from the read-only share
+          ansible.builtin.copy:
+            src: "{{ was_release_artifact_path }}"
+            dest: "{{ was_release_staged_path }}"
+            remote_src: true
+            mode: "0600"
+          when: was_release_change_required | bool
+
+        - name: Mark the point from which automatic rollback may be needed
+          ansible.builtin.set_fact:
+            was_release_deployment_started: true
+            was_release_phase: application update
+          when: was_release_change_required | bool
+
+        - name: Stop the application for a deterministic maintenance deployment
+          waslab.wasnd.application:
+            name: "{{ was_release_app.was_name }}"
+            state: stopped
+          when:
+            - was_release_change_required | bool
+            - was_release_application_installed | bool
+            - was_release_strategy == 'maintenance'
+
+        - name: Install or checksum-update the full application archive
+          waslab.wasnd.application:
+            name: "{{ was_release_app.was_name }}"
+            src: "{{ was_release_staged_path }}"
+            cluster: "{{ was_release_app.cluster }}"
+            context_root: "{{ was_release_app.context_root | default(omit) }}"
+            state: present
+            force: "{{ was_release_force }}"
+            ledger_path: "{{ was_release_checksum_ledger_path }}"
+          register: was_release_application_result
+          when: was_release_change_required | bool
+
+        - name: Synchronize every target cluster node after application update
+          waslab.wasnd.node_sync:
+            nodes: >-
+              {{ was_release_target_cluster.members |
+                 map(attribute='node') | unique | list }}
+          register: was_release_sync_result
+          when:
+            - was_release_change_required | bool
+            - was_release_application_result.changed | default(false) | bool
+
+        - name: Ensure the updated application is running across the cell
+          waslab.wasnd.application:
+            name: "{{ was_release_app.was_name }}"
+            state: started
+          register: was_release_start_result
+
+        - name: Validate load-balanced and direct-member endpoints
+          ansible.builtin.include_tasks: ../tasks/was_ear_health.yml
+          when: was_release_app.health_urls | default([]) | length > 0
+
+        - name: Save post-deployment health results
+          ansible.builtin.set_fact:
+            was_release_post_health: "{{ was_release_health_results | default({}) }}"
+
+        - name: Promote the validated release to deployment history
+          waslab.wasnd.release_record:
+            application: "{{ was_release_app.was_name }}"
+            operation: record
+            path: "{{ was_release_history_path }}"
+            release:
+              version: "{{ was_release_version }}"
+              checksum: "{{ was_release_artifact.checksum }}"
+              artifact_path: "{{ was_release_artifact_path }}"
+              manifest_path: "{{ was_release_manifest_path }}"
+              archive_type: "{{ was_release_app.archive_type }}"
+              cluster: "{{ was_release_app.cluster }}"
+              change_ticket: "{{ was_release_change_ticket }}"
+              requested_by: "{{ was_release_requested_by }}"
+              awx_job_id: "{{ awx_job_id | default(tower_job_id | default('n/a')) }}"
+              deployed_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+          register: was_release_record_result
+          when: was_release_change_required | bool
+
+        - name: Mark the approved release successful
+          ansible.builtin.set_fact:
+            was_release_status: >-
+              {{ 'SUCCESS' if was_release_change_required | bool else 'NO_CHANGE' }}
+            was_release_phase: complete
+      rescue:
+        - name: Capture the original deployment failure before rollback
+          ansible.builtin.set_fact:
+            was_release_status: FAILED
+            was_release_phase: "{{ was_release_phase | default('unknown') }}"
+            was_release_error:
+              task: "{{ ansible_failed_task.name | default('unknown task') }}"
+              message: "{{ ansible_failed_result.msg | default('No failure message was returned') }}"
+              rc: "{{ ansible_failed_result.rc | default('n/a') }}"
+              stdout: "{{ ansible_failed_result.stdout_lines | default(ansible_failed_result.stdout | default([])) }}"
+              stderr: "{{ ansible_failed_result.stderr_lines | default(ansible_failed_result.stderr | default([])) }}"
+              exception: "{{ ansible_failed_result.exception | default('') }}"
+
+        - name: Attempt automatic rollback to the previous immutable release
+          when:
+            - was_release_deployment_started | bool
+            - was_release_auto_rollback | bool
+            - was_release_rollback_available | default(false) | bool
+          block:
+            - name: Mark rollback in progress
+              ansible.builtin.set_fact:
+                was_release_phase: rollback
+                was_release_rollback_outcome: in progress
+                was_release_rollback_staged_path: >-
+                  {{ was_release_defaults.staging_root }}/{{ was_release_application_key }}-rollback-{{ was_release_run_id }}.{{ was_release_app.archive_type }}
+
+            - name: Revalidate the previous known-good immutable archive
+              waslab.wasnd.release_artifact:
+                artifact_path: "{{ was_release_rollback_record.artifact_path }}"
+                allowed_root: "{{ was_release_app.artifact_root }}"
+                expected_checksum: "{{ was_release_rollback_record.checksum }}"
+                expected_extension: "{{ was_release_app.archive_type }}"
+                maximum_size_mb: "{{ was_release_app.maximum_size_mb | default(4096) }}"
+
+            - name: Stage the previous known-good archive
+              ansible.builtin.copy:
+                src: "{{ was_release_rollback_record.artifact_path }}"
+                dest: "{{ was_release_rollback_staged_path }}"
+                remote_src: true
+                mode: "0600"
+
+            - name: Restore the previous complete application archive
+              waslab.wasnd.application:
+                name: "{{ was_release_app.was_name }}"
+                src: "{{ was_release_rollback_staged_path }}"
+                cluster: "{{ was_release_app.cluster }}"
+                context_root: "{{ was_release_app.context_root | default(omit) }}"
+                state: present
+                force: true
+                ledger_path: "{{ was_release_checksum_ledger_path }}"
+              register: was_release_rollback_result
+
+            - name: Synchronize every node after rollback
+              waslab.wasnd.node_sync:
+                nodes: >-
+                  {{ was_release_target_cluster.members |
+                     map(attribute='node') | unique | list }}
+
+            - name: Start the restored application
+              waslab.wasnd.application:
+                name: "{{ was_release_app.was_name }}"
+                state: started
+
+            - name: Validate the restored release endpoints
+              ansible.builtin.include_tasks: ../tasks/was_ear_health.yml
+              when: was_release_app.health_urls | default([]) | length > 0
+
+            - name: Mark rollback successful
+              ansible.builtin.set_fact:
+                was_release_status: FAILED_ROLLED_BACK
+                was_release_rollback_outcome: successful
+          rescue:
+            - name: Capture rollback failure without losing the original error
+              ansible.builtin.set_fact:
+                was_release_status: FAILED_ROLLBACK_FAILED
+                was_release_rollback_outcome: failed
+                was_release_rollback_result:
+                  task: "{{ ansible_failed_task.name | default('unknown rollback task') }}"
+                  message: "{{ ansible_failed_result.msg | default('No rollback failure message was returned') }}"
+                  rc: "{{ ansible_failed_result.rc | default('n/a') }}"
+                  stdout: "{{ ansible_failed_result.stdout_lines | default(ansible_failed_result.stdout | default([])) }}"
+                  stderr: "{{ ansible_failed_result.stderr_lines | default(ansible_failed_result.stderr | default([])) }}"
+
+        - name: Explain why automatic rollback was unavailable
+          ansible.builtin.set_fact:
+            was_release_rollback_outcome: >-
+              {{ 'disabled by survey' if not (was_release_auto_rollback | bool)
+                 else 'no previous recorded immutable release' }}
+            was_release_status: >-
+              {{ 'FAILED' if not (was_release_auto_rollback | bool)
+                 else 'FAILED_NO_ROLLBACK' }}
+          when:
+            - was_release_deployment_started | bool
+            - >-
+              not (was_release_auto_rollback | bool) or
+              not (was_release_rollback_available | default(false) | bool)
+      always:
+        - name: Remove staged release files
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ was_release_staged_path | default('') }}"
+            - "{{ was_release_rollback_staged_path | default('') }}"
+          when: item | length > 0
+          failed_when: false
+
+        - name: Release this job's application deployment lock
+          waslab.wasnd.release_lock:
+            name: "{{ was_release_app.was_name }}"
+            state: released
+            owner: "{{ was_release_lock_owner }}"
+            lock_root: "{{ was_release_defaults.lock_root }}"
+          when: was_release_lock_acquired | bool
+          register: was_release_lock_release
+          failed_when: false
+
+        - name: Persist and optionally email the final deployment report
+          ansible.builtin.include_tasks: ../tasks/was_ear_report.yml
+
+    - name: Fail AWX after reporting any unsuccessful deployment
+      ansible.builtin.fail:
+        msg: >-
+          Clustered application deployment ended as {{ was_release_status }}.
+          Rollback={{ was_release_rollback_outcome }}. Consult the verbose AWX
+          report and email attachment for the original and rollback errors.
+      when: was_release_status not in ['SUCCESS', 'NO_CHANGE']

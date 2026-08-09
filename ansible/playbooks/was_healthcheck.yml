@@ -1,0 +1,19 @@
+---
+- name: Verify the load-balanced sample endpoint
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    sample_url: http://172.29.0.30:8080/was-lab/
+  tasks:
+    - name: Request clustered application through HAProxy
+      ansible.builtin.uri:
+        url: "{{ sample_url }}"
+        return_content: true
+        status_code: 200
+      register: sample_response
+      changed_when: false
+
+    - name: Display responding WebSphere node
+      ansible.builtin.debug:
+        msg: "{{ sample_response.content }}"

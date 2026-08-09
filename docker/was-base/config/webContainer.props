@@ -1,0 +1,10 @@
+ResourceType=WebContainer
+ImplementingResourceType=WebContainer
+ResourceId=Cell=!{cellName}:Node=!{nodeName}:Server=!{serverName}:ApplicationServer=:WebContainer=
+AttributeInfo=properties(name,value)
+#
+# Direct Docker port mappings must use the server's internal virtual-host
+# aliases (9080/9443), not the external Host-header ports (9180/9543).
+#
+trusthostheaderport=false
+com.ibm.ws.webcontainer.extractHostHeaderPort=false

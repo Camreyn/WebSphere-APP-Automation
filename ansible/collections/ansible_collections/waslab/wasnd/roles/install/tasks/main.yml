@@ -1,0 +1,43 @@
+---
+- name: Install WebSphere operating-system prerequisites
+  ansible.builtin.dnf:
+    name: "{{ was_os_packages }}"
+    state: present
+  become: true
+  when: was_manage_os_packages | bool
+
+- name: Ensure the WebSphere operating-system group exists
+  ansible.builtin.group:
+    name: "{{ was_os_group }}"
+    state: present
+  become: true
+
+- name: Ensure the WebSphere operating-system user exists
+  ansible.builtin.user:
+    name: "{{ was_os_user }}"
+    group: "{{ was_os_group }}"
+    create_home: true
+    shell: /bin/bash
+    state: present
+  become: true
+
+- name: Install or update genuine WebSphere Network Deployment
+  waslab.wasnd.installation:
+    media_root: "{{ was_media_root }}"
+    version: "{{ was_version }}"
+    install_root: "{{ was_install_root }}"
+    im_install_root: "{{ was_im_install_root }}"
+    shared_resources_root: "{{ was_im_shared_root }}"
+    was_package_id: "{{ was_package_id }}"
+    java_package_id: "{{ was_java_package_id }}"
+    state: present
+  become: true
+
+- name: Assign the WebSphere installation to its runtime account
+  ansible.builtin.file:
+    path: "{{ was_install_root }}"
+    owner: "{{ was_os_user }}"
+    group: "{{ was_os_group }}"
+    recurse: true
+    state: directory
+  become: true

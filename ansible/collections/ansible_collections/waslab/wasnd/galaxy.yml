@@ -1,0 +1,19 @@
+---
+namespace: waslab
+name: wasnd
+version: 0.1.0
+readme: README.md
+authors:
+  - WAS ND Lab Maintainers
+description: Full-lifecycle automation for traditional IBM WebSphere Application Server Network Deployment 9.
+license:
+  - GPL-3.0-or-later
+tags:
+  - ibm
+  - middleware
+  - websphere
+  - was
+  - automation
+build_ignore:
+  - .ansible
+  - tests/output

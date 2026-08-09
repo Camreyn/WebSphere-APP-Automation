@@ -1,0 +1,131 @@
+---
+- name: Start WebSphere Base and every live-discovered application
+  hosts: was_base
+  gather_facts: false
+  become: true
+  become_user: was
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: "{{ was_profile_name }}"
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+      host: "{{ was_soap_host }}"
+      port: "{{ was_soap_port }}"
+  vars:
+    was_application_exclusions: []
+  tasks:
+    - name: Ensure the WebSphere application-server profile is running
+      waslab.wasnd.profile_runtime:
+        profile_type: application_server
+        server_name: "{{ was_server_name | default('server1') }}"
+        state: started
+      register: was_profile_start
+
+    - name: Discover installed applications from the live WebSphere cell
+      waslab.wasnd.cell_info:
+      register: was_live_cell
+
+    - name: Select every discovered application not explicitly excluded
+      ansible.builtin.set_fact:
+        was_discovered_applications: >-
+          {{
+            (was_live_cell.facts.applications | default([])
+            | difference(was_application_exclusions | default([])))
+            | sort
+          }}
+        was_application_start_rows: []
+
+    - name: Start every live-discovered application through wsadmin
+      waslab.wasnd.application:
+        name: "{{ item }}"
+        state: started
+      loop: "{{ was_discovered_applications }}"
+      loop_control:
+        label: "{{ item }}"
+      register: was_application_start_batch
+      ignore_errors: true
+
+    - name: Normalize application startup results for reporting
+      ansible.builtin.set_fact:
+        was_application_start_rows: >-
+          {{
+            was_application_start_rows +
+            [{
+              'name': item.get('item', 'unknown'),
+              'changed': item.get('changed', false),
+              'before_running': item.get('before', {}).get('running', false),
+              'after_running': item.get('after', {}).get('running', false),
+              'failed': item.get('failed', false),
+              'message': item.get('msg', '')
+            }]
+          }}
+      loop: "{{ was_application_start_batch.results | default([]) }}"
+      loop_control:
+        label: "{{ item.get('item', 'unknown') }}"
+
+    - name: Summarize startup failures and incomplete runtime states
+      ansible.builtin.set_fact:
+        was_application_failures: >-
+          {{ was_application_start_rows | selectattr('failed', 'equalto', true) | list }}
+        was_application_not_running: >-
+          {{ was_application_start_rows | rejectattr('failed', 'equalto', true)
+             | selectattr('after_running', 'equalto', false) | list }}
+
+    - name: Build the AWX startup report
+      ansible.builtin.set_fact:
+        was_startup_report: |-
+          WebSphere server and auto-discovered application startup report
+          ================================================================
+          Result: {{ 'SUCCESS' if (
+            was_profile_start.after.running
+            and (was_discovered_applications | length > 0)
+            and (was_application_failures | length == 0)
+            and (was_application_not_running | length == 0)
+          ) else 'FAILED' }}
+          AWX job ID: {{ awx_job_id | default(tower_job_id | default('n/a')) }}
+          Host: {{ inventory_hostname }}
+          Product: {{ was_live_cell.facts.product.edition }} {{ was_live_cell.facts.product.version }}
+          Cell: {{ was_live_cell.facts.cell }}
+          Profile: {{ was_profile_start.after.profile }}
+          Server process: {{ was_profile_start.after.process }}
+          Server running: {{ was_profile_start.after.running }}
+          Server changed: {{ was_profile_start.changed }}
+          Discovery source: live AdminApp.list() via waslab.wasnd.cell_info
+          Discovered application count: {{ was_discovered_applications | length }}
+          Excluded application count: {{ was_application_exclusions | length }}
+          Startup failure count: {{ was_application_failures | length }}
+          Not-running count: {{ was_application_not_running | length }}
+
+          Applications
+          ------------
+          {% for application in was_application_start_rows %}
+          - {{ application.name }}: {{
+              ('FAILED - ' ~ application.message) if application.failed
+              else ('STARTED' if application.after_running else 'NOT RUNNING')
+            }}; changed={{ application.changed }}; previously_running={{ application.before_running }}
+          {% else %}
+          - No applications were discovered.
+          {% endfor %}
+
+    - name: Display the complete startup report in the AWX job log
+      ansible.builtin.debug:
+        msg: "{{ was_startup_report }}"
+
+    - name: Preserve the startup report as AWX job artifacts
+      ansible.builtin.set_stats:
+        data:
+          was_startup_report: "{{ was_startup_report }}"
+          was_discovered_applications: "{{ was_discovered_applications }}"
+          was_application_start_rows: "{{ was_application_start_rows }}"
+        per_host: false
+
+    - name: Require the server and every discovered application to be running
+      ansible.builtin.assert:
+        that:
+          - was_profile_start.after.running
+          - was_discovered_applications | length > 0
+          - was_application_failures | length == 0
+          - was_application_not_running | length == 0
+        fail_msg: "The WebSphere startup report above contains an unsuccessful item."
+        success_msg: "WebSphere and all live-discovered applications are running."

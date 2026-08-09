@@ -1,0 +1,21 @@
+---
+was_media_root: /was855
+was_version: 9.0.5.28
+was_install_root: /opt/WebSphere/AppServers
+was_im_install_root: /opt/IBM/InstallationManager
+was_im_shared_root: /opt/IBM/IMShared
+was_package_id: com.ibm.websphere.ND.v90
+was_java_package_id: com.ibm.java.jdk.v8
+was_os_user: was
+was_os_group: was
+was_manage_os_packages: true
+was_os_packages:
+  - bash
+  - findutils
+  - gzip
+  - hostname
+  - libnsl
+  - libxcrypt-compat
+  - tar
+  - unzip
+  - which

@@ -1,0 +1,59 @@
+---
+- name: Prove the IBM ILAN Base runtime through genuine profile wsadmin
+  hosts: was_base
+  gather_facts: false
+  become: true
+  become_user: was
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: "{{ was_profile_name }}"
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+      host: "{{ was_soap_host }}"
+      port: "{{ was_soap_port }}"
+  tasks:
+    - name: Verify the genuine profile wsadmin executable
+      ansible.builtin.stat:
+        path: "{{ was_install_root }}/profiles/{{ was_profile_name }}/bin/wsadmin.sh"
+      register: base_wsadmin
+
+    - name: Require the genuine IBM profile tool
+      ansible.builtin.assert:
+        that:
+          - base_wsadmin.stat.exists
+          - base_wsadmin.stat.executable
+        fail_msg: "The official IBM AppSrv01 profile wsadmin.sh is unavailable."
+
+    - name: Gather Base cell information through the collection bridge
+      waslab.wasnd.cell_info:
+      register: base_cell
+
+    - name: Require the pinned traditional WebSphere Base product
+      ansible.builtin.assert:
+        that:
+          - base_cell.facts.product.edition == 'Base'
+          - base_cell.facts.product.version == '9.0.5.28'
+          - base_cell.facts.clusters | length == 0
+        fail_msg: "The live server is not the pinned WebSphere traditional Base 9.0.5.28 target."
+
+    - name: Execute caller-supplied Jython with the collection wsadmin module
+      waslab.wasnd.wsadmin:
+        src: wsadmin_base_probe.py
+      register: base_probe
+
+    - name: Require the machine-readable genuine wsadmin probe result
+      ansible.builtin.assert:
+        that:
+          - base_probe.result.probe == 'genuine-wsadmin-jython'
+          - base_probe.result.cell == base_cell.facts.cell
+          - base_probe.result.server_mbeans | int > 0
+
+    - name: Display the verified Base runtime
+      ansible.builtin.debug:
+        msg:
+          product: "{{ base_cell.facts.product }}"
+          cell: "{{ base_probe.result.cell }}"
+          node: "{{ base_probe.result.connected_node }}"
+          wsadmin: "{{ was_install_root }}/profiles/{{ was_profile_name }}/bin/wsadmin.sh"
+          connector: "SOAP {{ was_soap_host }}:{{ was_soap_port }}"

@@ -1,0 +1,27 @@
+---
+- name: Install WebSphere ND on every cell host
+  hosts: was_hosts
+  gather_facts: true
+  roles:
+    - role: waslab.wasnd.install
+
+- name: Create and start the deployment manager
+  hosts: was_dmgr
+  gather_facts: true
+  roles:
+    - role: waslab.wasnd.deployment_manager
+
+- name: Create and federate every managed node
+  hosts: was_nodes
+  gather_facts: true
+  serial: 1
+  roles:
+    - role: waslab.wasnd.managed_node
+
+- name: Converge the deployment-manager cell topology
+  hosts: was_dmgr
+  gather_facts: false
+  become: true
+  become_user: was
+  roles:
+    - role: waslab.wasnd.cell

@@ -1,0 +1,69 @@
+---
+- name: Validate an immutable clustered WebSphere application release
+  hosts: was_dmgr
+  gather_facts: false
+  become: true
+  become_user: was
+  vars_files:
+    - ../vars/was_application_catalog.yml
+  vars:
+    was_release_application_key: "{{ deployment_application | default('') }}"
+    was_release_version: "{{ deployment_version | default('') }}"
+    was_release_expected_checksum: "{{ deployment_sha256 | default('') }}"
+    was_release_change_ticket: "{{ change_ticket | default('') }}"
+    was_release_requested_by: "{{ requested_by | default('') }}"
+    was_release_notification_email_to: "{{ notification_email_to | default('') }}"
+    was_release_strategy: "{{ deployment_strategy | default('maintenance') }}"
+    was_release_force: "{{ force_deploy | default(false) | bool }}"
+    was_release_auto_rollback: "{{ auto_rollback | default(true) | bool }}"
+    was_release_send_email: "{{ send_email | default(true) | bool }}"
+    was_release_notes: "{{ release_notes | default('') }}"
+    was_release_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    was_awx_public_url: "{{ awx_public_url | default(was_release_defaults.awx_public_url) }}"
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: "{{ was_release_defaults.dmgr_profile_name }}"
+      host: "{{ was_release_defaults.soap_host }}"
+      port: "{{ was_release_defaults.soap_port }}"
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+  tasks:
+    - name: Initialize validation reporting state
+      ansible.builtin.set_fact:
+        was_release_status: VALIDATING
+        was_release_phase: preflight
+        was_release_error: {}
+        was_release_rollback_outcome: not applicable
+
+    - name: Validate the complete release request
+      block:
+        - name: Execute immutable release and cell preflight
+          ansible.builtin.include_tasks: ../tasks/was_ear_preflight.yml
+
+        - name: Mark the request ready for workflow approval
+          ansible.builtin.set_fact:
+            was_release_status: VALIDATED
+            was_release_phase: awaiting approval
+      rescue:
+        - name: Capture verbose validation failure detail
+          ansible.builtin.set_fact:
+            was_release_status: VALIDATION_FAILED
+            was_release_phase: preflight
+            was_release_error:
+              task: "{{ ansible_failed_task.name | default('unknown task') }}"
+              message: "{{ ansible_failed_result.msg | default('No failure message was returned') }}"
+              rc: "{{ ansible_failed_result.rc | default('n/a') }}"
+              stdout: "{{ ansible_failed_result.stdout_lines | default(ansible_failed_result.stdout | default([])) }}"
+              stderr: "{{ ansible_failed_result.stderr_lines | default(ansible_failed_result.stderr | default([])) }}"
+              exception: "{{ ansible_failed_result.exception | default('') }}"
+      always:
+        - name: Persist and optionally email the validation report
+          ansible.builtin.include_tasks: ../tasks/was_ear_report.yml
+
+    - name: Fail the validation job after reporting the complete error
+      ansible.builtin.fail:
+        msg: >-
+          Release validation failed. See the attached/persisted verbose report
+          for task, message, return code, stdout, stderr, and cell state.
+      when: was_release_status != 'VALIDATED'

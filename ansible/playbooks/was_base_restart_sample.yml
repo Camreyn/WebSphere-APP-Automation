@@ -1,0 +1,46 @@
+---
+- name: Restart the sample application on WebSphere Base
+  hosts: was_base
+  gather_facts: false
+  become: true
+  become_user: was
+  vars:
+    base_app_name: was-lab-base
+    base_ledger: "{{ was_install_root }}/profiles/{{ was_profile_name }}/.waslab/application-checksums.json"
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: "{{ was_profile_name }}"
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+      host: "{{ was_soap_host }}"
+      port: "{{ was_soap_port }}"
+  tasks:
+    - name: Stop the sample application through genuine wsadmin
+      waslab.wasnd.application:
+        name: "{{ base_app_name }}"
+        ledger_path: "{{ base_ledger }}"
+        state: stopped
+      register: base_stop
+
+    - name: Start the sample application through genuine wsadmin
+      waslab.wasnd.application:
+        name: "{{ base_app_name }}"
+        ledger_path: "{{ base_ledger }}"
+        state: started
+      register: base_start
+
+    - name: Require the application to be running after restart
+      ansible.builtin.assert:
+        that:
+          - base_start.after.installed
+          - base_start.after.running
+        fail_msg: "{{ base_app_name }} did not return to a running state."
+
+    - name: Display the restart result
+      ansible.builtin.debug:
+        msg:
+          application: "{{ base_app_name }}"
+          stopped: "{{ base_stop.changed }}"
+          started: "{{ base_start.changed }}"
+          running: "{{ base_start.after.running }}"

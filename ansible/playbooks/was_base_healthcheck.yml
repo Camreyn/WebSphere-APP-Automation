@@ -1,0 +1,23 @@
+---
+- name: Verify the application deployed to WebSphere Base
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    base_sample_url: http://172.29.0.40:9080/was-lab-base/
+  tasks:
+    - name: Request the Base sample application
+      ansible.builtin.uri:
+        url: "{{ base_sample_url }}"
+        return_content: true
+        status_code: 200
+      register: base_sample_response
+      changed_when: false
+
+    - name: Require the generated application response
+      ansible.builtin.assert:
+        that: "'WebSphere Base 9 Lab' in base_sample_response.content"
+
+    - name: Display the verified endpoint
+      ansible.builtin.debug:
+        msg: "HTTP {{ base_sample_response.status }} from {{ base_sample_url }}"

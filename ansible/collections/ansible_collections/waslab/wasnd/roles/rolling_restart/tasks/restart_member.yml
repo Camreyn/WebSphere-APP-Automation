@@ -1,0 +1,25 @@
+---
+- name: Restart one WebSphere cluster member
+  waslab.wasnd.cluster_member:
+    install_root: "{{ was_install_root }}"
+    profile_name: "{{ was_dmgr_profile_name }}"
+    host: "{{ was_dmgr_soap_host }}"
+    port: "{{ was_dmgr_soap_port }}"
+    username: "{{ was_admin_user }}"
+    password: "{{ was_admin_password }}"
+    cluster: "{{ was_cluster_name }}"
+    node: "{{ was_rolling_member.node }}"
+    name: "{{ was_rolling_member.name | default(was_rolling_member.server | default('server1')) }}"
+    state: restarted
+
+- name: Wait for the load-balanced health endpoint
+  ansible.builtin.uri:
+    url: "{{ was_rolling_health_url }}"
+    status_code: 200
+  delegate_to: localhost
+  become: false
+  register: was_rolling_health
+  retries: "{{ was_rolling_health_retries }}"
+  delay: "{{ was_rolling_health_delay }}"
+  until: was_rolling_health.status == 200
+  when: was_rolling_health_url | length > 0

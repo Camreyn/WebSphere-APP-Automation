@@ -1,0 +1,38 @@
+---
+- name: Verify genuine WebSphere installation on every lab host
+  hosts: was_hosts
+  gather_facts: false
+  tasks:
+    - name: Read WebSphere product and fix-pack information
+      ansible.builtin.command:
+        argv:
+          - "{{ was_install_root }}/bin/versionInfo.sh"
+          - -ifixes
+      become: true
+      become_user: was
+      register: version_info
+      changed_when: false
+
+    - name: Display installed WebSphere level
+      ansible.builtin.debug:
+        var: version_info.stdout_lines
+
+- name: Read deployment manager cell and cluster status through genuine wsadmin
+  hosts: was_dmgr
+  gather_facts: false
+  become: true
+  become_user: was
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: Dmgr01
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+  tasks:
+    - name: Gather structured WebSphere cell information
+      waslab.wasnd.cell_info:
+      register: was_cell_info
+
+    - name: Display WebSphere cell information
+      ansible.builtin.debug:
+        var: was_cell_info.facts

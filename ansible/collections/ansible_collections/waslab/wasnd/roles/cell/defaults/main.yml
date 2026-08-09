@@ -1,0 +1,19 @@
+---
+was_install_root: /opt/WebSphere/AppServers
+was_dmgr_profile_name: Dmgr01
+was_admin_user: wsadmin
+was_admin_password: ""
+was_dmgr_soap_host: localhost
+was_dmgr_soap_port: 8879
+was_clusters:
+  - name: AppCluster01
+    prefer_local: true
+    state: present
+    members:
+      - node: Node01
+        name: server1
+        weight: 2
+      - node: Node02
+        name: server1
+        weight: 2
+was_sync_after_cell_change: true

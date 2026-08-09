@@ -1,0 +1,217 @@
+---
+- name: Exercise media-independent release workflow modules
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    selftest_root: /tmp/waslab-release-primitives-selftest
+    selftest_archive: /work/files/was-lab.war
+  tasks:
+    - name: Reset the isolated self-test directory
+      ansible.builtin.file:
+        path: "{{ selftest_root }}"
+        state: absent
+
+    - name: Create the isolated self-test directory
+      ansible.builtin.file:
+        path: "{{ selftest_root }}"
+        state: directory
+        mode: "0700"
+
+    - name: Calculate the generated sample archive checksum
+      ansible.builtin.stat:
+        path: "{{ selftest_archive }}"
+        checksum_algorithm: sha256
+      register: selftest_archive_stat
+
+    - name: Validate the sample archive
+      waslab.wasnd.release_artifact:
+        artifact_path: "{{ selftest_archive }}"
+        allowed_root: /work/files
+        expected_checksum: "{{ selftest_archive_stat.stat.checksum }}"
+        expected_extension: war
+      register: selftest_artifact
+
+    - name: Acquire a media-independent application lock
+      waslab.wasnd.release_lock:
+        name: SelfTestApplication
+        owner: selftest-job
+        state: acquired
+        lock_root: "{{ selftest_root }}/locks"
+        metadata:
+          purpose: collection self-test
+      register: selftest_lock_acquire
+
+    - name: Inspect the acquired application lock
+      waslab.wasnd.release_lock:
+        name: SelfTestApplication
+        state: status
+        lock_root: "{{ selftest_root }}/locks"
+      register: selftest_lock_status
+
+    - name: Require accurate lock state
+      ansible.builtin.assert:
+        that:
+          - selftest_lock_acquire.changed
+          - selftest_lock_status.locked
+          - selftest_lock_status.lock.owner == 'selftest-job'
+
+    - name: Record the first successful release
+      waslab.wasnd.release_record:
+        application: SelfTestApplication
+        operation: record
+        path: "{{ selftest_root }}/deployment-history.json"
+        release:
+          version: "1.0.0"
+          checksum: "{{ selftest_artifact.checksum }}"
+          artifact_path: "{{ selftest_archive }}"
+      register: selftest_first_record
+
+    - name: Repeat the same release record idempotently
+      waslab.wasnd.release_record:
+        application: SelfTestApplication
+        operation: record
+        path: "{{ selftest_root }}/deployment-history.json"
+        release:
+          version: "1.0.0"
+          checksum: "{{ selftest_artifact.checksum }}"
+          artifact_path: "{{ selftest_archive }}"
+      register: selftest_repeated_record
+
+    - name: Promote a second release and retain the first for rollback
+      waslab.wasnd.release_record:
+        application: SelfTestApplication
+        operation: record
+        path: "{{ selftest_root }}/deployment-history.json"
+        release:
+          version: "2.0.0"
+          checksum: "{{ '0' * 64 }}"
+          artifact_path: /work/files/was-lab-2.war
+      register: selftest_second_record
+
+    - name: Require idempotent history and rollback data
+      ansible.builtin.assert:
+        that:
+          - selftest_first_record.changed
+          - not selftest_repeated_record.changed
+          - selftest_second_record.changed
+          - selftest_second_record.previous.version == '1.0.0'
+
+    - name: Exercise SMTP report validation without making a connection
+      waslab.wasnd.smtp_report:
+        host: smtp.example.invalid
+        port: 25
+        from_address: waslab@example.invalid
+        to:
+          - operations@example.invalid
+        subject: WAS release module self-test
+        body: No email is transmitted because this task uses check mode.
+      check_mode: true
+      register: selftest_email
+
+    - name: Require SMTP check-mode behavior
+      ansible.builtin.assert:
+        that:
+          - not selftest_email.changed
+          - selftest_email.recipients == ['operations@example.invalid']
+
+    - name: Exercise sanitized SMTP connection error reporting
+      waslab.wasnd.smtp_report:
+        host: 127.0.0.1
+        port: 1
+        from_address: waslab@example.invalid
+        to:
+          - operations@example.invalid
+        subject: WAS release module expected connection failure
+        body: This exercises the verbose SMTP failure return without credentials.
+        timeout: 1
+      register: selftest_email_failure
+      ignore_errors: true
+
+    - name: Require a structured and sanitized SMTP error
+      ansible.builtin.assert:
+        that:
+          - selftest_email_failure.failed
+          - selftest_email_failure.error_type | length > 0
+          - selftest_email_failure.error | length > 0
+
+    - name: Define a synthetic failed release for report rendering
+      ansible.builtin.set_fact:
+        was_release_defaults:
+          report_root: "{{ selftest_root }}/reports"
+          smtp_host: ""
+          smtp_port: 25
+          smtp_starttls: false
+          smtp_ssl: false
+          smtp_from_address: waslab@example.invalid
+          awx_public_url: http://awx.example.invalid/
+        was_release_status: VALIDATION_FAILED
+        was_release_phase: synthetic self-test
+        was_release_application_key: SelfTestApplication
+        was_release_version: "2.0.0"
+        was_release_expected_checksum: "{{ '0' * 64 }}"
+        was_release_change_ticket: SELFTEST-1
+        was_release_requested_by: collection self-test
+        was_release_strategy: maintenance
+        was_release_started_at: "2026-01-01T00:00:00Z"
+        was_release_notes: Synthetic report exercise
+        was_release_send_email: true
+        was_release_notification_email_to: operations@example.invalid
+        was_release_auto_rollback: true
+        was_release_rollback_available: false
+        was_release_rollback_outcome: not applicable
+        was_awx_public_url: http://awx.example.invalid/
+        was_release_app:
+          was_name: SelfTestApplication
+          cluster: SelfTestCluster
+        was_release_artifact:
+          checksum: "{{ '0' * 64 }}"
+          size: 1234
+          entry_count: 2
+        was_release_manifest:
+          source_commit: selftest
+          built_at: "2026-01-01T00:00:00Z"
+        was_release_cell:
+          facts:
+            cell: SelfTestCell
+        was_release_change_required: false
+        was_release_error:
+          task: Synthetic failing task
+          message: Synthetic failure for self-test
+          rc: 42
+          stdout: [synthetic stdout]
+          stderr: [synthetic stderr]
+
+    - name: Render and persist the verbose release error report
+      ansible.builtin.include_tasks: ../tasks/was_ear_report.yml
+
+    - name: Read the persisted synthetic report
+      ansible.builtin.slurp:
+        src: "{{ was_release_report_file.dest }}"
+      register: selftest_report
+
+    - name: Require verbose failure fields in the persisted report
+      ansible.builtin.assert:
+        that:
+          - "'VALIDATION_FAILED' in (selftest_report.content | b64decode)"
+          - "'Synthetic failing task' in (selftest_report.content | b64decode)"
+          - "'Synthetic failure for self-test' in (selftest_report.content | b64decode)"
+          - "'synthetic stderr' in (selftest_report.content | b64decode)"
+
+    - name: Release the application lock
+      waslab.wasnd.release_lock:
+        name: SelfTestApplication
+        owner: selftest-job
+        state: released
+        lock_root: "{{ selftest_root }}/locks"
+      register: selftest_lock_release
+
+    - name: Require successful lock release
+      ansible.builtin.assert:
+        that:
+          - selftest_lock_release.changed
+          - not selftest_lock_release.locked
+    - name: Remove the isolated self-test directory
+      ansible.builtin.file:
+        path: "{{ selftest_root }}"
+        state: absent

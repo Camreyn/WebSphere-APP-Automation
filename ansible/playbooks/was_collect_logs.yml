@@ -1,0 +1,8 @@
+---
+- name: Collect WebSphere profile logs from every host
+  hosts: was_hosts
+  gather_facts: false
+  vars:
+    was_profile_name: "{{ 'Dmgr01' if inventory_hostname in groups['was_dmgr'] else 'AppSrv01' }}"
+  roles:
+    - role: waslab.wasnd.collect_logs

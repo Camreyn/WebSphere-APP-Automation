@@ -1,0 +1,55 @@
+---
+- name: Deploy or update the sample application on the WebSphere cluster
+  hosts: was_dmgr
+  gather_facts: false
+  become: true
+  become_user: was
+  vars:
+    sample_app_name: was-lab
+    sample_war_local: "{{ playbook_dir }}/../files/was-lab.war"
+    sample_war_remote: /var/tmp/was-lab.war
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: Dmgr01
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+  tasks:
+    - name: Verify the generated sample WAR is present in the AWX project
+      ansible.builtin.stat:
+        path: "{{ sample_war_local }}"
+      delegate_to: localhost
+      become: false
+      register: sample_war
+
+    - name: Require the sample application build artifact
+      ansible.builtin.assert:
+        that: sample_war.stat.exists
+        fail_msg: "Run lab.ps1 sample-app and republish the AWX project first."
+
+    - name: Stage and deploy the sample WAR
+      block:
+        - name: Copy sample WAR to the deployment manager host
+          ansible.builtin.copy:
+            src: "{{ sample_war_local }}"
+            dest: "{{ sample_war_remote }}"
+            owner: was
+            group: was
+            mode: "0640"
+          become: true
+          become_user: was
+
+        - name: Install or checksum-update the application with IBM wsadmin
+          waslab.wasnd.application:
+            name: "{{ sample_app_name }}"
+            src: "{{ sample_war_remote }}"
+            cluster: "{{ was_cluster_name }}"
+            context_root: /was-lab
+            state: present
+      always:
+        - name: Remove staged WAR from deployment manager
+          ansible.builtin.file:
+            path: "{{ sample_war_remote }}"
+            state: absent
+          become: true
+          become_user: was

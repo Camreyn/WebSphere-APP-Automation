@@ -1,0 +1,16 @@
+---
+- name: Synchronize both managed nodes with the deployment manager
+  hosts: was_dmgr
+  gather_facts: false
+  become: true
+  become_user: was
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: Dmgr01
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+  tasks:
+    - name: Synchronize configured nodes
+      waslab.wasnd.node_sync:
+        nodes: "{{ was_cluster_members | map(attribute='node') | unique | list }}"

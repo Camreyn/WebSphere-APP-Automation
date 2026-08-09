@@ -1,0 +1,15 @@
+---
+all:
+  vars:
+    ansible_user: ansible
+    ansible_python_interpreter: /usr/bin/python3
+    was_install_root: /opt/IBM/WebSphere/AppServer
+    was_profile_name: AppSrv01
+    was_admin_user: wsadmin
+    was_soap_host: localhost
+    was_soap_port: 8880
+  children:
+    was_base:
+      hosts:
+        was-base:
+          ansible_host: 172.29.0.40

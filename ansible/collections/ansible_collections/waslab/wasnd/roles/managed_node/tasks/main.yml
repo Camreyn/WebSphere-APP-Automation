@@ -1,0 +1,98 @@
+---
+- name: Require the injected WebSphere administrative credential
+  ansible.builtin.assert:
+    that:
+      - was_admin_user | length > 0
+      - was_admin_password | length > 0
+    fail_msg: A WebSphere administrative credential is required.
+  no_log: true
+
+- name: Create the managed profile
+  waslab.wasnd.profile:
+    install_root: "{{ was_install_root }}"
+    profile_name: "{{ was_node_profile_name }}"
+    profile_path: "{{ was_install_root }}/profiles/{{ was_node_profile_name }}"
+    profile_type: managed
+    node_name: "{{ was_node_name }}"
+    host_name: "{{ was_node_host_name }}"
+    username: "{{ was_admin_user }}"
+    password: "{{ was_admin_password }}"
+    state: present
+  become: true
+  become_user: "{{ was_os_user }}"
+
+- name: Federate the managed profile
+  waslab.wasnd.federation:
+    install_root: "{{ was_install_root }}"
+    profile_name: "{{ was_node_profile_name }}"
+    node_name: "{{ was_node_name }}"
+    cell_name: "{{ was_cell_name }}"
+    dmgr_host: "{{ was_dmgr_host }}"
+    dmgr_port: "{{ was_dmgr_soap_port }}"
+    username: "{{ was_admin_user }}"
+    password: "{{ was_admin_password }}"
+    state: present
+  become: true
+  become_user: "{{ was_os_user }}"
+
+- name: Persist encoded SOAP credentials for node-agent systemd shutdown
+  waslab.wasnd.soap_credentials:
+    install_root: "{{ was_install_root }}"
+    profile_name: "{{ was_node_profile_name }}"
+    username: "{{ was_admin_user }}"
+    password: "{{ was_admin_password }}"
+    state: present
+  become: true
+  become_user: "{{ was_os_user }}"
+  when: was_systemd_enabled | bool
+
+- name: Install the node-agent systemd unit
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ was_node_systemd_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=IBM WebSphere Node Agent {{ was_node_profile_name }}
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=forking
+      User={{ was_os_user }}
+      Group={{ was_os_group }}
+      PIDFile={{ was_install_root }}/profiles/{{ was_node_profile_name }}/logs/nodeagent/nodeagent.pid
+      ExecStart={{ was_install_root }}/profiles/{{ was_node_profile_name }}/bin/startNode.sh
+      ExecStop={{ was_install_root }}/profiles/{{ was_node_profile_name }}/bin/stopNode.sh
+      Restart=on-failure
+      TimeoutStartSec=300
+      TimeoutStopSec=300
+
+      [Install]
+      WantedBy=multi-user.target
+  become: true
+  when: was_systemd_enabled | bool
+  notify: Reload systemd
+
+- name: Flush systemd configuration before starting the node agent
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the node-agent systemd unit
+  ansible.builtin.systemd_service:
+    name: "{{ was_node_systemd_service_name }}"
+    enabled: true
+    state: started
+  become: true
+  when: was_systemd_enabled | bool
+
+- name: Start the node agent without systemd
+  ansible.builtin.command:
+    argv:
+      - "{{ was_install_root }}/profiles/{{ was_node_profile_name }}/bin/startNode.sh"
+  become: true
+  become_user: "{{ was_os_user }}"
+  register: was_node_start
+  changed_when: "'ADMU3000I' in was_node_start.stdout"
+  failed_when: was_node_start.rc not in [0, 1]
+  when: not (was_systemd_enabled | bool)

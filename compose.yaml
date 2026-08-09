@@ -1,0 +1,260 @@
+x-was-common: &was-common
+  image: ${WAS_IMAGE:-wasnd-lab:9.0.5.28-ubi9}
+  restart: unless-stopped
+  environment: &was-environment
+    WAS_INSTALL_ROOT: /opt/WebSphere/AppServers
+    WAS_ADMIN_USER: ${WAS_ADMIN_USER:-wsadmin}
+    WAS_CELL_NAME: ${WAS_CELL_NAME:-LabCell01}
+    WAS_DMGR_NODE: ${WAS_DMGR_NODE:-DmgrNode01}
+    WAS_CLUSTER_NAME: ${WAS_CLUSTER_NAME:-AppCluster01}
+    WAS_NODE1_NAME: ${WAS_NODE1_NAME:-Node01}
+    WAS_NODE2_NAME: ${WAS_NODE2_NAME:-Node02}
+    WAS_SERVER_NAME: ${WAS_SERVER_NAME:-server1}
+    WAS_INITIAL_HEAP_MB: ${WAS_INITIAL_HEAP_MB:-256}
+    WAS_MAX_HEAP_MB: ${WAS_MAX_HEAP_MB:-768}
+  secrets:
+    - was_admin_password
+    - ansible_authorized_key
+  networks:
+    lab:
+
+services:
+  portal:
+    build:
+      context: .
+      dockerfile: docker/portal/Dockerfile
+    image: wasnd-lab-portal:1.0
+    container_name: wasnd-lab-portal
+    restart: unless-stopped
+    ports:
+      - "${LAB_PORTAL_BIND_ADDRESS:-127.0.0.1}:${LAB_PORTAL_PORT:-8888}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      lab:
+        ipv4_address: 172.29.0.11
+
+  scm:
+    build:
+      context: .
+      dockerfile: docker/scm/Dockerfile
+    image: wasnd-lab-scm:1.0
+    container_name: wasnd-lab-scm
+    restart: unless-stopped
+    volumes:
+      - ./.data/scm:/srv/git:ro
+    ports:
+      - "127.0.0.1:9418:9418"
+    networks:
+      lab:
+        ipv4_address: 172.29.0.10
+
+  lan-gateway:
+    image: haproxy:2.9-alpine
+    profiles: ["lan"]
+    container_name: wasnd-lab-lan-gateway
+    restart: unless-stopped
+    depends_on:
+      portal:
+        condition: service_healthy
+      scm:
+        condition: service_started
+    volumes:
+      - ./docker/lan-gateway/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:2220:2220"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:2221:2221"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:2222:2222"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:2230:2230"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:8080:8080"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:8404:8404"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:8879:8879"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:8880:8880"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:8888:8888"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:9043:9043"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:9060:9060"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:9081:9081"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:9082:9082"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:9143:9143"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:9160:9160"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:9180:9180"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:9418:9418"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:9444:9444"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:9445:9445"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:9543:9543"
+      - "${LAB_LAN_ADDRESS:-127.0.0.2}:32000:32000"
+    networks:
+      lab:
+        ipv4_address: 172.29.0.50
+
+  was-base:
+    build:
+      context: .
+      dockerfile: docker/was-base/Dockerfile
+      args:
+        IBM_WAS_IMAGE: ${WAS_BASE_IMAGE:-icr.io/appcafe/websphere-traditional:9.0.5.28}
+    image: wasnd-lab-base:9.0.5.28-ilan
+    profiles: ["was-base"]
+    container_name: wasnd-lab-base
+    hostname: was-base
+    restart: unless-stopped
+    environment:
+      PROFILE_NAME: AppSrv01
+      SERVER_NAME: server1
+      ADMIN_USER_NAME: ${WAS_ADMIN_USER:-wsadmin}
+      UPDATE_HOSTNAME: "true"
+      EXTRACT_PORT_FROM_HOST_HEADER: "false"
+      ENABLE_BASIC_LOGGING: "true"
+      WAS_LAB_DISPLAY_NAME: WebSphere Base 9 Lab
+    secrets:
+      - was_admin_password
+      - ansible_authorized_key
+    volumes:
+      - was_base_profile:/opt/IBM/WebSphere/AppServer/profiles/AppSrv01
+      - ./artifacts/releases:/mnt/was-releases:ro
+    ports:
+      - "127.0.0.1:2230:22"
+      - "127.0.0.1:8880:8880"
+      - "127.0.0.1:9143:9043"
+      - "127.0.0.1:9160:9060"
+      - "127.0.0.1:9180:9080"
+      - "127.0.0.1:9543:9443"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "test -x /opt/IBM/WebSphere/AppServer/profiles/AppSrv01/bin/wsadmin.sh && test -f /opt/IBM/WebSphere/AppServer/profiles/AppSrv01/.waslab-local-signer-ready && timeout 1 bash -c '</dev/tcp/127.0.0.1/22' && timeout 1 bash -c '</dev/tcp/127.0.0.1/8880'"]
+      interval: 10s
+      timeout: 4s
+      retries: 45
+      start_period: 30s
+    networks:
+      lab:
+        ipv4_address: 172.29.0.40
+
+  was-dmgr:
+    <<: *was-common
+    profiles: ["was"]
+    container_name: wasnd-lab-dmgr
+    hostname: was-dmgr
+    build:
+      context: .
+      dockerfile: docker/wasnd/Dockerfile
+      args:
+        WAS_VERSION: ${WAS_VERSION:-9.0.5.28}
+        WAS_INSTALL_ROOT: /opt/WebSphere/AppServers
+    environment:
+      <<: *was-environment
+      WAS_ROLE: dmgr
+    volumes:
+      - was_dmgr_profile:/opt/WebSphere/AppServers/profiles/Dmgr01
+      - ./artifacts/releases:/mnt/was-releases:ro
+    ports:
+      - "127.0.0.1:2220:22"
+      - "127.0.0.1:8879:8879"
+      - "127.0.0.1:9043:9043"
+      - "127.0.0.1:9060:9060"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "timeout 1 bash -c '</dev/tcp/127.0.0.1/8879'"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+    networks:
+      lab:
+        ipv4_address: 172.29.0.20
+
+  was-node1:
+    <<: *was-common
+    profiles: ["was"]
+    container_name: wasnd-lab-node1
+    hostname: was-node1
+    depends_on:
+      was-dmgr:
+        condition: service_healthy
+    environment:
+      <<: *was-environment
+      WAS_ROLE: node
+      WAS_NODE_NAME: ${WAS_NODE1_NAME:-Node01}
+    volumes:
+      - was_node1_profile:/opt/WebSphere/AppServers/profiles/AppSrv01
+    ports:
+      - "127.0.0.1:2221:22"
+      - "127.0.0.1:9081:9080"
+      - "127.0.0.1:9444:9443"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "test -f /opt/WebSphere/AppServers/profiles/AppSrv01/.lab-federated && timeout 1 bash -c '</dev/tcp/127.0.0.1/22'"]
+      interval: 10s
+      timeout: 3s
+      retries: 60
+    networks:
+      lab:
+        ipv4_address: 172.29.0.21
+
+  was-node2:
+    <<: *was-common
+    profiles: ["was"]
+    container_name: wasnd-lab-node2
+    hostname: was-node2
+    depends_on:
+      was-dmgr:
+        condition: service_healthy
+    environment:
+      <<: *was-environment
+      WAS_ROLE: node
+      WAS_NODE_NAME: ${WAS_NODE2_NAME:-Node02}
+    volumes:
+      - was_node2_profile:/opt/WebSphere/AppServers/profiles/AppSrv01
+    ports:
+      - "127.0.0.1:2222:22"
+      - "127.0.0.1:9082:9080"
+      - "127.0.0.1:9445:9443"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "test -f /opt/WebSphere/AppServers/profiles/AppSrv01/.lab-federated && timeout 1 bash -c '</dev/tcp/127.0.0.1/22'"]
+      interval: 10s
+      timeout: 3s
+      retries: 60
+    networks:
+      lab:
+        ipv4_address: 172.29.0.22
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    profiles: ["was"]
+    container_name: wasnd-lab-haproxy
+    restart: unless-stopped
+    depends_on:
+      was-node1:
+        condition: service_healthy
+      was-node2:
+        condition: service_healthy
+    volumes:
+      - ./docker/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8404:8404"
+    networks:
+      lab:
+        ipv4_address: 172.29.0.30
+
+networks:
+  lab:
+    name: ${LAB_NETWORK:-was-aap-lab}
+    ipam:
+      config:
+        - subnet: ${LAB_SUBNET:-172.29.0.0/24}
+
+volumes:
+  was_base_profile:
+    name: wasnd-lab-base-profile
+  was_dmgr_profile:
+    name: wasnd-lab-dmgr-profile
+  was_node1_profile:
+    name: wasnd-lab-node1-profile
+  was_node2_profile:
+    name: wasnd-lab-node2-profile
+
+secrets:
+  was_admin_password:
+    file: ./.secrets/was_admin_password
+  ansible_authorized_key:
+    file: ./.secrets/ansible_lab.pub

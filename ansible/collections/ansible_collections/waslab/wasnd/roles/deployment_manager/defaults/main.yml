@@ -1,0 +1,13 @@
+---
+was_install_root: /opt/WebSphere/AppServers
+was_os_user: was
+was_os_group: was
+was_dmgr_profile_name: Dmgr01
+was_dmgr_node_name: DmgrNode01
+was_cell_name: LabCell01
+was_admin_user: wsadmin
+was_admin_password: ""
+was_dmgr_host_name: "{{ inventory_hostname }}"
+was_dmgr_soap_port: 8879
+was_systemd_enabled: false
+was_systemd_service_name: was-dmgr

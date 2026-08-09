@@ -1,0 +1,30 @@
+---
+- name: Probe configured application endpoints
+  ansible.builtin.uri:
+    url: "{{ item }}"
+    method: GET
+    return_content: true
+    status_code: "{{ was_release_app.health_expected_status | default(200) }}"
+    validate_certs: "{{ was_release_app.health_validate_certs | default(true) }}"
+    timeout: 20
+  loop: "{{ was_release_app.health_urls | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  register: was_release_health_results
+  retries: "{{ was_release_app.health_retries | default(15) }}"
+  delay: "{{ was_release_app.health_delay | default(2) }}"
+  until: was_release_health_results.status == (was_release_app.health_expected_status | default(200))
+
+- name: Verify expected application response content
+  ansible.builtin.assert:
+    that:
+      - was_release_app.health_expected_text in (item.content | default(''))
+    fail_msg: >-
+      {{ item.item }} returned the expected HTTP status but did not contain
+      '{{ was_release_app.health_expected_text }}'.
+  loop: "{{ was_release_health_results.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('health endpoint') }}"
+  when: was_release_app.health_expected_text | default('') | length > 0

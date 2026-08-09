@@ -1,0 +1,67 @@
+---
+- name: Require the injected WebSphere administrative credential
+  ansible.builtin.assert:
+    that:
+      - was_admin_user | length > 0
+      - was_admin_password | length > 0
+    fail_msg: A WebSphere administrative credential is required.
+  no_log: true
+
+- name: Ensure configured clusters exist
+  waslab.wasnd.cluster:
+    install_root: "{{ was_install_root }}"
+    profile_name: "{{ was_dmgr_profile_name }}"
+    host: "{{ was_dmgr_soap_host }}"
+    port: "{{ was_dmgr_soap_port }}"
+    username: "{{ was_admin_user }}"
+    password: "{{ was_admin_password }}"
+    name: "{{ item.name }}"
+    state: "{{ item.state | default('present') }}"
+    prefer_local: "{{ item.prefer_local | default(true) }}"
+  loop: "{{ was_clusters }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: was_cluster_changes
+
+- name: Build requested cluster-member list
+  ansible.builtin.set_fact:
+    was_requested_cluster_members: >-
+      {{ was_requested_cluster_members | default([]) +
+         [item.1 | combine({'cluster': item.0.name})] }}
+  loop: "{{ was_clusters | subelements('members', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.0.name }}/{{ item.1.node }}/{{ item.1.name | default('server1') }}"
+
+- name: Ensure configured cluster members exist
+  waslab.wasnd.cluster_member:
+    install_root: "{{ was_install_root }}"
+    profile_name: "{{ was_dmgr_profile_name }}"
+    host: "{{ was_dmgr_soap_host }}"
+    port: "{{ was_dmgr_soap_port }}"
+    username: "{{ was_admin_user }}"
+    password: "{{ was_admin_password }}"
+    cluster: "{{ item.cluster }}"
+    node: "{{ item.node }}"
+    name: "{{ item.name | default('server1') }}"
+    weight: "{{ item.weight | default(2) }}"
+    generate_unique_ports: "{{ item.generate_unique_ports | default(false) }}"
+    state: present
+  loop: "{{ was_requested_cluster_members | default([]) }}"
+  loop_control:
+    label: "{{ item.cluster }}/{{ item.node }}/{{ item.name | default('server1') }}"
+  register: was_member_changes
+
+- name: Synchronize managed nodes after cell configuration changes
+  waslab.wasnd.node_sync:
+    install_root: "{{ was_install_root }}"
+    profile_name: "{{ was_dmgr_profile_name }}"
+    host: "{{ was_dmgr_soap_host }}"
+    port: "{{ was_dmgr_soap_port }}"
+    username: "{{ was_admin_user }}"
+    password: "{{ was_admin_password }}"
+    nodes: "{{ was_requested_cluster_members | default([]) | map(attribute='node') | unique | list }}"
+  when:
+    - was_sync_after_cell_change | bool
+    - >-
+      (was_cluster_changes.results | default([]) | selectattr('changed') | list | length > 0) or
+      (was_member_changes.results | default([]) | selectattr('changed') | list | length > 0)

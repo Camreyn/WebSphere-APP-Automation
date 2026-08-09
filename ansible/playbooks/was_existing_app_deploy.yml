@@ -1,0 +1,508 @@
+---
+- name: Update an existing WebSphere application with live progress and logs
+  hosts: "{{ deployment_target_group | default('was_base') }}"
+  gather_facts: false
+  become: true
+  become_user: was
+  vars:
+    was_operator_application: "{{ deployment_application | default('') | trim }}"
+    was_operator_version: "{{ deployment_version | default('') | trim }}"
+    was_operator_ticket: "{{ change_ticket | default('') | trim }}"
+    was_operator_preflight: "{{ preflight_only | default(false) | bool }}"
+    was_operator_requested_by: >-
+      {{ awx_user_name | default(tower_user_name | default(requested_by | default('AWX operator'))) }}
+    was_operator_job_id: >-
+      {{ awx_job_id | default(tower_job_id | default('manual')) }}
+    was_operator_release_root: "{{ was_release_share_root | default('/mnt/was-releases') }}"
+    was_operator_manifest_path: >-
+      {{ was_operator_release_root }}/{{ was_operator_application }}/{{ was_operator_version }}/release.yml
+    was_operator_profile_root: >-
+      {{ was_install_root }}/profiles/{{ was_profile_name }}
+    was_operator_profile_type: >-
+      {{ was_deployment_profile_type | default('application_server') }}
+    was_operator_process_name: >-
+      {{ 'dmgr' if was_operator_profile_type == 'dmgr'
+         else ('nodeagent' if was_operator_profile_type == 'node'
+         else (was_server_name | default('server1'))) }}
+    was_operator_sync_nodes: "{{ was_deployment_sync_nodes | default([]) }}"
+    was_operator_ledger_path: >-
+      {{ was_operator_profile_root }}/.waslab/application-checksums.json
+    was_operator_history_path: >-
+      {{ was_operator_profile_root }}/.waslab/operator-deployment-history.json
+    was_operator_staging_root: /var/tmp/waslab-deployments
+    was_operator_backup_root: /var/tmp/waslab-backups
+    was_operator_lock_root: /var/tmp/waslab-locks
+    was_operator_lock_owner: >-
+      awx-{{ was_operator_job_id }}-{{ was_operator_ticket | regex_replace('[^A-Za-z0-9_.-]', '_') }}
+    was_operator_log_paths: >-
+      {{ was_deployment_log_paths | default([
+           was_operator_profile_root ~ '/logs/' ~ was_operator_process_name ~ '/SystemOut.log',
+           was_operator_profile_root ~ '/logs/' ~ was_operator_process_name ~ '/SystemErr.log'
+         ]) }}
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: "{{ was_profile_name }}"
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+      host: "{{ was_soap_host }}"
+      port: "{{ was_soap_port }}"
+  tasks:
+    - name: Initialize the operator-visible deployment report
+      ansible.builtin.set_fact:
+        was_operator_status: STARTING
+        was_operator_stage: initialization
+        was_operator_error: {}
+        was_operator_lock_acquired: false
+        was_operator_backup_ready: false
+        was_operator_deployment_started: false
+        was_operator_rollback: not needed
+        was_operator_staged_path: ""
+        was_operator_backup_path: ""
+        was_operator_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+
+    - name: Run the guarded existing-application release
+      block:
+        - name: "[1/8] Mark current WAS logs for deployment-only output"
+          waslab.wasnd.log_delta:
+            paths: "{{ was_operator_log_paths }}"
+            mode: mark
+          register: was_operator_log_mark
+
+        - name: "[2/8] Ensure the WebSphere administrative profile is available"
+          waslab.wasnd.profile_runtime:
+            profile_type: "{{ was_operator_profile_type }}"
+            server_name: "{{ was_server_name | default('server1') }}"
+            state: started
+          register: was_operator_runtime
+
+        - name: "[3/8] Validate the four-field release request"
+          ansible.builtin.assert:
+            that:
+              - was_operator_application is match('^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$')
+              - was_operator_version is match('^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$')
+              - was_operator_ticket | length > 0
+              - was_operator_ticket | length <= 128
+              - was_operator_profile_type in ['application_server', 'dmgr', 'node']
+            fail_msg: >-
+              Application and version may contain only letters, numbers, dots,
+              underscores, and hyphens; a change ticket is required.
+
+        - name: "[3/8] Locate the immutable release manifest"
+          ansible.builtin.stat:
+            path: "{{ was_operator_manifest_path }}"
+          register: was_operator_manifest_stat
+
+        - name: "[3/8] Require the requested immutable release"
+          ansible.builtin.assert:
+            that:
+              - was_operator_manifest_stat.stat.exists
+              - was_operator_manifest_stat.stat.isreg
+            fail_msg: >-
+              Release not found at {{ was_operator_manifest_path }}. Publish
+              release.yml and its EAR/WAR to the read-only release share first.
+
+        - name: "[3/8] Read the immutable release manifest"
+          ansible.builtin.slurp:
+            src: "{{ was_operator_manifest_path }}"
+          register: was_operator_manifest_raw
+
+        - name: "[3/8] Parse the immutable release manifest"
+          ansible.builtin.set_fact:
+            was_operator_manifest: >-
+              {{ was_operator_manifest_raw.content | b64decode | from_yaml }}
+
+        - name: "[3/8] Validate manifest identity and safety fields"
+          ansible.builtin.assert:
+            that:
+              - was_operator_manifest is mapping
+              - was_operator_manifest.schema_version | int == 1
+              - was_operator_manifest.application == was_operator_application
+              - was_operator_manifest.version == was_operator_version
+              - was_operator_manifest.filename is match('^[A-Za-z0-9][A-Za-z0-9_.-]*[.](ear|war)$')
+              - was_operator_manifest.sha256 is match('^[0-9A-Fa-f]{64}$')
+              - was_operator_manifest.health is mapping
+              - was_operator_manifest.health.url | default('') | length > 0
+            fail_msg: >-
+              release.yml must bind schema 1, application, version, safe EAR/WAR
+              filename, SHA-256, and a health.url to this exact request.
+
+        - name: "[3/8] Derive validated artifact and health-check values"
+          ansible.builtin.set_fact:
+            was_operator_artifact_path: >-
+              {{ was_operator_release_root }}/{{ was_operator_application }}/{{ was_operator_version }}/{{ was_operator_manifest.filename }}
+            was_operator_archive_type: >-
+              {{ was_operator_manifest.filename | regex_replace('^.*[.]', '') | lower }}
+            was_operator_health_url: "{{ was_operator_manifest.health.url }}"
+            was_operator_health_status: "{{ was_operator_manifest.health.status_code | default(200) | int }}"
+            was_operator_health_contains: "{{ was_operator_manifest.health.contains | default('') }}"
+
+        - name: "[3/8] Verify the release archive checksum and ZIP structure"
+          waslab.wasnd.release_artifact:
+            artifact_path: "{{ was_operator_artifact_path }}"
+            allowed_root: "{{ was_operator_release_root }}/{{ was_operator_application }}"
+            expected_checksum: "{{ was_operator_manifest.sha256 }}"
+            expected_extension: "{{ was_operator_archive_type }}"
+            maximum_size_mb: "{{ was_operator_manifest.maximum_size_mb | default(4096) }}"
+          register: was_operator_artifact
+
+        - name: "[4/8] Discover the application directly from the live WAS cell"
+          waslab.wasnd.application_info:
+            name: "{{ was_operator_application }}"
+          register: was_operator_discovery
+
+        - name: "[4/8] Refuse accidental new application installation"
+          ansible.builtin.assert:
+            that:
+              - was_operator_discovery.application.installed
+            fail_msg: >-
+              {{ was_operator_application }} is not installed in the live cell.
+              This simple job only updates existing applications so it can
+              preserve their current targets, context roots, and bindings.
+
+        - name: "[4/8] Read the last successful operator deployment"
+          waslab.wasnd.release_record:
+            application: "{{ was_operator_application }}"
+            operation: get
+            path: "{{ was_operator_history_path }}"
+          register: was_operator_history
+
+        - name: "[4/8] Decide whether application bytes need to change"
+          ansible.builtin.set_fact:
+            was_operator_change_required: >-
+              {{ not (
+                   was_operator_history.current is mapping and
+                   was_operator_history.current.checksum | default('') == was_operator_artifact.checksum
+                 ) }}
+            was_operator_status: >-
+              {{ 'PREFLIGHT_OK' if was_operator_preflight else 'READY' }}
+            was_operator_stage: >-
+              {{ 'preflight complete' if was_operator_preflight else 'deployment ready' }}
+
+        - name: "PRECHECK COMPLETE | Display discovered application and release"
+          ansible.builtin.debug:
+            msg:
+              status: "{{ was_operator_status }}"
+              application: "{{ was_operator_discovery.application }}"
+              release_version: "{{ was_operator_version }}"
+              release_sha256: "{{ was_operator_artifact.checksum }}"
+              change_required: "{{ was_operator_change_required }}"
+              preflight_only: "{{ was_operator_preflight }}"
+
+        - name: "[5/8] Acquire the per-application deployment lock"
+          waslab.wasnd.release_lock:
+            name: "{{ was_operator_application }}"
+            state: acquired
+            owner: "{{ was_operator_lock_owner }}"
+            lock_root: "{{ was_operator_lock_root }}"
+            metadata:
+              version: "{{ was_operator_version }}"
+              change_ticket: "{{ was_operator_ticket }}"
+              requested_by: "{{ was_operator_requested_by }}"
+              awx_job_id: "{{ was_operator_job_id }}"
+          register: was_operator_lock
+          when: not was_operator_preflight
+
+        - name: "[5/8] Remember lock ownership for guaranteed cleanup"
+          ansible.builtin.set_fact:
+            was_operator_lock_acquired: true
+          when: not was_operator_preflight
+
+        - name: "[5/8] Create the protected release staging directory"
+          ansible.builtin.file:
+            path: "{{ was_operator_staging_root }}"
+            state: directory
+            mode: "0700"
+          when:
+            - not was_operator_preflight
+            - was_operator_change_required | bool
+
+        - name: "[5/8] Derive protected staging and backup paths"
+          ansible.builtin.set_fact:
+            was_operator_staged_path: >-
+              {{ was_operator_staging_root }}/{{ was_operator_application }}-{{ was_operator_version }}-{{ was_operator_job_id }}.{{ was_operator_archive_type }}
+            was_operator_backup_path: >-
+              {{ was_operator_backup_root }}/{{ was_operator_application }}/{{ was_operator_job_id }}/{{ was_operator_application }}.ear
+          when:
+            - not was_operator_preflight
+            - was_operator_change_required | bool
+
+        - name: "[5/8] Stage the checked release archive"
+          ansible.builtin.copy:
+            src: "{{ was_operator_artifact_path }}"
+            dest: "{{ was_operator_staged_path }}"
+            remote_src: true
+            mode: "0600"
+          when:
+            - not was_operator_preflight
+            - was_operator_change_required | bool
+
+        - name: "[5/8] Export the currently installed application for rollback"
+          waslab.wasnd.application_export:
+            name: "{{ was_operator_application }}"
+            dest: "{{ was_operator_backup_path }}"
+          register: was_operator_backup
+          when:
+            - not was_operator_preflight
+            - was_operator_change_required | bool
+
+        - name: "[5/8] Arm automatic rollback only after a verified export"
+          ansible.builtin.set_fact:
+            was_operator_backup_ready: true
+            was_operator_deployment_started: true
+            was_operator_stage: application update
+          when:
+            - not was_operator_preflight
+            - was_operator_change_required | bool
+
+        - name: "[6/8] Stop the existing application for a deterministic update"
+          waslab.wasnd.application:
+            name: "{{ was_operator_application }}"
+            state: stopped
+            ledger_path: "{{ was_operator_ledger_path }}"
+          register: was_operator_stop
+          when:
+            - not was_operator_preflight
+            - was_operator_change_required | bool
+
+        - name: "[6/8] Update only the existing application archive"
+          waslab.wasnd.application:
+            name: "{{ was_operator_application }}"
+            src: "{{ was_operator_staged_path }}"
+            state: present
+            force: true
+            ledger_path: "{{ was_operator_ledger_path }}"
+          register: was_operator_update
+          when:
+            - not was_operator_preflight
+            - was_operator_change_required | bool
+
+        - name: "[6/8] Synchronize configured ND nodes after application update"
+          waslab.wasnd.node_sync:
+            nodes: "{{ was_operator_sync_nodes }}"
+          register: was_operator_sync
+          when:
+            - not was_operator_preflight
+            - was_operator_change_required | bool
+            - was_operator_sync_nodes | length > 0
+
+        - name: "[6/8] Start the deployed application"
+          waslab.wasnd.application:
+            name: "{{ was_operator_application }}"
+            state: started
+            ledger_path: "{{ was_operator_ledger_path }}"
+          register: was_operator_start
+          when: not was_operator_preflight
+
+        - name: "[7/8] Verify the application endpoint and expected release text"
+          ansible.builtin.uri:
+            url: "{{ was_operator_health_url }}"
+            return_content: true
+            status_code: "{{ was_operator_health_status }}"
+            validate_certs: "{{ was_operator_manifest.health.validate_certs | default(true) | bool }}"
+          register: was_operator_health
+          retries: "{{ was_operator_manifest.health.retries | default(15) | int }}"
+          delay: "{{ was_operator_manifest.health.delay | default(2) | int }}"
+          until:
+            - was_operator_health.status | int == was_operator_health_status | int
+            - >-
+              was_operator_health_contains | length == 0 or
+              was_operator_health_contains in was_operator_health.content
+          when: not was_operator_preflight
+
+        - name: "[7/8] Rediscover the application after deployment"
+          waslab.wasnd.application_info:
+            name: "{{ was_operator_application }}"
+          register: was_operator_post_discovery
+          when: not was_operator_preflight
+
+        - name: "[7/8] Require the deployed application to be installed and running"
+          ansible.builtin.assert:
+            that:
+              - was_operator_post_discovery.application.installed
+              - was_operator_post_discovery.application.running
+            fail_msg: "The updated application did not reach a running state."
+          when: not was_operator_preflight
+
+        - name: "[7/8] Record the successful immutable release"
+          waslab.wasnd.release_record:
+            application: "{{ was_operator_application }}"
+            operation: record
+            path: "{{ was_operator_history_path }}"
+            release:
+              version: "{{ was_operator_version }}"
+              checksum: "{{ was_operator_artifact.checksum }}"
+              artifact_path: "{{ was_operator_artifact_path }}"
+              manifest_path: "{{ was_operator_manifest_path }}"
+              change_ticket: "{{ was_operator_ticket }}"
+              requested_by: "{{ was_operator_requested_by }}"
+              awx_job_id: "{{ was_operator_job_id }}"
+              deployed_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+          register: was_operator_record
+          when:
+            - not was_operator_preflight
+            - was_operator_change_required | bool
+
+        - name: "[7/8] Mark the operator request successful"
+          ansible.builtin.set_fact:
+            was_operator_status: >-
+              {{ 'PREFLIGHT_OK' if was_operator_preflight
+                 else ('SUCCESS' if was_operator_change_required | bool else 'NO_CHANGE') }}
+            was_operator_stage: complete
+      rescue:
+        - name: Capture the exact failed progress step for the AWX report
+          ansible.builtin.set_fact:
+            was_operator_status: FAILED
+            was_operator_error:
+              task: "{{ ansible_failed_task.name | default('unknown task') }}"
+              message: "{{ ansible_failed_result.msg | default('No failure message was returned') }}"
+              rc: "{{ ansible_failed_result.rc | default('n/a') }}"
+              stdout: "{{ ansible_failed_result.stdout_lines | default(ansible_failed_result.stdout | default([])) }}"
+              stderr: "{{ ansible_failed_result.stderr_lines | default(ansible_failed_result.stderr | default([])) }}"
+
+        - name: Automatically restore the pre-deployment exported EAR
+          when:
+            - was_operator_deployment_started | bool
+            - was_operator_backup_ready | bool
+          block:
+            - name: "ROLLBACK | Restore the complete exported application"
+              waslab.wasnd.application:
+                name: "{{ was_operator_application }}"
+                src: "{{ was_operator_backup_path }}"
+                state: present
+                force: true
+                ledger_path: "{{ was_operator_ledger_path }}"
+              register: was_operator_rollback_update
+
+            - name: "ROLLBACK | Synchronize configured ND nodes after restore"
+              waslab.wasnd.node_sync:
+                nodes: "{{ was_operator_sync_nodes }}"
+              when: was_operator_sync_nodes | length > 0
+
+            - name: "ROLLBACK | Start the restored application"
+              waslab.wasnd.application:
+                name: "{{ was_operator_application }}"
+                state: started
+                ledger_path: "{{ was_operator_ledger_path }}"
+
+            - name: "ROLLBACK | Require the restored endpoint to answer"
+              ansible.builtin.uri:
+                url: "{{ was_operator_health_url }}"
+                status_code: "{{ was_operator_health_status }}"
+                validate_certs: "{{ was_operator_manifest.health.validate_certs | default(true) | bool }}"
+              register: was_operator_rollback_health
+              retries: 15
+              delay: 2
+              until: >-
+                was_operator_rollback_health.status | int ==
+                was_operator_health_status | int
+
+            - name: "ROLLBACK | Mark automatic recovery successful"
+              ansible.builtin.set_fact:
+                was_operator_status: FAILED_ROLLED_BACK
+                was_operator_rollback: successful
+          rescue:
+            - name: "ROLLBACK | Preserve both original and rollback failures"
+              ansible.builtin.set_fact:
+                was_operator_status: FAILED_ROLLBACK_FAILED
+                was_operator_rollback: failed
+                was_operator_rollback_error:
+                  task: "{{ ansible_failed_task.name | default('unknown rollback task') }}"
+                  message: "{{ ansible_failed_result.msg | default('No rollback failure message was returned') }}"
+                  rc: "{{ ansible_failed_result.rc | default('n/a') }}"
+      always:
+        - name: Release this job's application lock
+          waslab.wasnd.release_lock:
+            name: "{{ was_operator_application }}"
+            state: released
+            owner: "{{ was_operator_lock_owner }}"
+            lock_root: "{{ was_operator_lock_root }}"
+          when: was_operator_lock_acquired | bool
+          failed_when: false
+
+        - name: Remove the protected staged release copy
+          ansible.builtin.file:
+            path: "{{ was_operator_staged_path }}"
+            state: absent
+          when: was_operator_staged_path | length > 0
+          failed_when: false
+
+        - name: Remove the temporary rollback export after a safe outcome
+          ansible.builtin.file:
+            path: "{{ was_operator_backup_path }}"
+            state: absent
+          when:
+            - was_operator_backup_path | length > 0
+            - was_operator_status != 'FAILED_ROLLBACK_FAILED'
+          failed_when: false
+
+        - name: "[8/8] Read only the WAS log lines created by this job"
+          waslab.wasnd.log_delta:
+            paths: "{{ was_operator_log_paths }}"
+            mode: delta
+            offsets: "{{ was_operator_log_mark.offsets | default({}) }}"
+            maximum_bytes: 262144
+            maximum_lines: 1000
+          register: was_operator_log_delta
+          failed_when: false
+
+        - name: Build the complete AWX deployment report
+          ansible.builtin.set_fact:
+            was_operator_report:
+              status: "{{ was_operator_status }}"
+              stage: "{{ was_operator_stage }}"
+              application: "{{ was_operator_application }}"
+              version: "{{ was_operator_version }}"
+              change_ticket: "{{ was_operator_ticket }}"
+              requested_by: "{{ was_operator_requested_by }}"
+              awx_job_id: "{{ was_operator_job_id }}"
+              preflight_only: "{{ was_operator_preflight }}"
+              started_at: "{{ was_operator_started_at }}"
+              finished_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+              release_manifest: "{{ was_operator_manifest | default({}) }}"
+              artifact: "{{ was_operator_artifact | default({}) }}"
+              application_before: "{{ was_operator_discovery.application | default({}) }}"
+              application_after: "{{ was_operator_post_discovery.application | default({}) }}"
+              change_required: "{{ was_operator_change_required | default(false) }}"
+              backup: "{{ was_operator_backup | default({}) }}"
+              update: "{{ was_operator_update | default({}) }}"
+              node_sync: "{{ was_operator_sync | default({}) }}"
+              health:
+                url: "{{ was_operator_health_url | default('') }}"
+                status: "{{ was_operator_health.status | default('not run') }}"
+                expected_text_found: >-
+                  {{ (was_operator_health_contains | default('') | length == 0) or
+                     (was_operator_health_contains | default('') in was_operator_health.content | default('')) }}
+              rollback: "{{ was_operator_rollback }}"
+              rollback_error: "{{ was_operator_rollback_error | default({}) }}"
+              error: "{{ was_operator_error }}"
+              was_log_delta:
+                warning_count: "{{ was_operator_log_delta.warning_count | default(0) }}"
+                error_count: "{{ was_operator_log_delta.error_count | default(0) }}"
+                files: "{{ was_operator_log_delta.files | default([]) }}"
+
+        - name: "AWX REPORT | Display the complete deployment report"
+          ansible.builtin.debug:
+            var: was_operator_report
+
+        - name: "AWX REPORT | Display the deployment-time WAS log excerpt"
+          ansible.builtin.debug:
+            msg: >-
+              {{ was_operator_log_delta.combined_lines
+                 if was_operator_log_delta.combined_lines | default([]) | length > 0
+                 else ['No new SystemOut.log or SystemErr.log lines were written.'] }}
+
+        - name: Publish the report as an AWX job artifact
+          ansible.builtin.set_stats:
+            data:
+              was_deployment_report: "{{ was_operator_report }}"
+            per_host: false
+
+    - name: Fail AWX only after logs and rollback results have been reported
+      ansible.builtin.fail:
+        msg: >-
+          Existing-application deployment ended as {{ was_operator_status }}.
+          Failed step={{ was_operator_error.task | default('unknown') }};
+          rollback={{ was_operator_rollback }}. Review AWX REPORT and the
+          deployment-time WAS log excerpt above.
+      when: was_operator_status not in ['SUCCESS', 'NO_CHANGE', 'PREFLIGHT_OK']

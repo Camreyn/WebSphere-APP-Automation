@@ -1,0 +1,71 @@
+---
+- name: Install, update, and start a sample WAR on WebSphere Base
+  hosts: was_base
+  gather_facts: false
+  become: true
+  become_user: was
+  vars:
+    base_app_name: was-lab-base
+    base_war_local: "{{ playbook_dir }}/../files/was-lab.war"
+    base_war_remote: /var/tmp/was-lab-base.war
+    base_ledger: "{{ was_install_root }}/profiles/{{ was_profile_name }}/.waslab/application-checksums.json"
+  module_defaults:
+    group/waslab.wasnd.wasnd:
+      install_root: "{{ was_install_root }}"
+      profile_name: "{{ was_profile_name }}"
+      username: "{{ was_admin_user }}"
+      password: "{{ was_admin_password }}"
+      host: "{{ was_soap_host }}"
+      port: "{{ was_soap_port }}"
+  tasks:
+    - name: Verify the sample WAR is present in the Ansible project
+      ansible.builtin.stat:
+        path: "{{ base_war_local }}"
+      delegate_to: localhost
+      become: false
+      register: base_sample_war
+
+    - name: Require the sample application artifact
+      ansible.builtin.assert:
+        that: base_sample_war.stat.exists
+        fail_msg: "Run .\\lab.ps1 sample-app before the Base integration test."
+
+    - name: Stage and deploy the sample WAR
+      block:
+        - name: Copy the sample WAR to the Base host
+          ansible.builtin.copy:
+            src: "{{ base_war_local }}"
+            dest: "{{ base_war_remote }}"
+            owner: was
+            group: root
+            mode: "0640"
+
+        - name: Install or checksum-update the application through genuine wsadmin
+          waslab.wasnd.application:
+            name: "{{ base_app_name }}"
+            src: "{{ base_war_remote }}"
+            context_root: /was-lab-base
+            virtual_host: default_host
+            ledger_path: "{{ base_ledger }}"
+            state: present
+          register: base_deployment
+
+        - name: Start the application through genuine wsadmin
+          waslab.wasnd.application:
+            name: "{{ base_app_name }}"
+            ledger_path: "{{ base_ledger }}"
+            state: started
+          register: base_start
+
+        - name: Report application convergence
+          ansible.builtin.debug:
+            msg:
+              deployment_changed: "{{ base_deployment.changed }}"
+              runtime_changed: "{{ base_start.changed }}"
+              installed: "{{ base_deployment.after.installed }}"
+              running: "{{ base_start.after.running }}"
+      always:
+        - name: Remove the staged WAR
+          ansible.builtin.file:
+            path: "{{ base_war_remote }}"
+            state: absent

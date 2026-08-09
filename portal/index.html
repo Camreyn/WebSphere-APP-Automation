@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#0b1020">
+    <meta name="description" content="One-stop launcher for the HIGH-CHARITY WebSphere ND and AWX lab.">
+    <title>HIGH-CHARITY Lab Hub</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#services">Skip to services</a>
+    <div class="backdrop" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div class="shell topbar-inner">
+        <a class="brand" href="/" aria-label="HIGH-CHARITY Lab Hub home">
+          <span class="brand-mark">HC</span>
+          <span>
+            <strong>HIGH-CHARITY</strong>
+            <small>LAB HUB</small>
+          </span>
+        </a>
+        <div class="host-chip" title="Links on this page use the host shown here">
+          <span class="pulse" aria-hidden="true"></span>
+          <span>Host</span>
+          <code data-current-host>10.71.1.144</code>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell" id="services">
+      <section class="hero" aria-labelledby="page-title">
+        <div class="hero-copy">
+          <p class="eyebrow">Traditional WebSphere 9 · AWX · Local Infrastructure</p>
+          <h1 id="page-title">Your lab,<br><span>one click away.</span></h1>
+          <p class="hero-text">
+            Launch the controller, use the live IBM Base server, inspect the ND cell,
+            or copy an operations endpoint without hunting through port lists.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" data-service-link data-protocol="http" data-port="32000" data-path="/" href="http://10.71.1.144:32000/">Open AWX</a>
+            <a class="button button-secondary" data-service-link data-protocol="http" data-port="32000" data-path="/#/templates" href="http://10.71.1.144:32000/#/templates">Launch EAR workflow</a>
+            <a class="button button-secondary" data-service-link data-protocol="http" data-port="9180" data-path="/was-lab-base/" href="http://10.71.1.144:9180/was-lab-base/">Open Base sample app</a>
+          </div>
+        </div>
+
+        <aside class="overview" aria-label="Lab overview">
+          <div class="overview-heading">
+            <span>Environment</span>
+            <strong>LOCAL / DOCKER</strong>
+          </div>
+          <dl>
+            <div><dt>Controller</dt><dd>AWX 24.6.1</dd></div>
+            <div><dt>Middleware</dt><dd>WAS Base 9.0.5.28</dd></div>
+            <div><dt>Live profile</dt><dd>AppSrv01</dd></div>
+            <div><dt>ND cell</dt><dd>LabCell01 (media gated)</dd></div>
+            <div><dt>Cluster</dt><dd>AppCluster01</dd></div>
+            <div><dt>Members</dt><dd>Node01 · Node02</dd></div>
+          </dl>
+          <p class="overview-note"><span class="status-dot status-dot-amber"></span> IBM Base ILAN is live; the clustered ND cell still requires entitled media.</p>
+        </aside>
+      </section>
+
+      <section class="summary-strip" aria-label="Service summary">
+        <div><strong>4</strong><span>services live now</span></div>
+        <div><strong>15</strong><span>AWX job templates</span></div>
+        <div><strong>2</strong><span>cluster members</span></div>
+        <div><strong>1</strong><span>place to launch it all</span></div>
+      </section>
+
+      <p class="connectivity-note">
+        Links use this page's current host address. Run <code>.\lab.ps1 lan-up</code>
+        on HIGH-CHARITY to publish them. AWX HTTP and Git are trusted-LAN services.
+      </p>
+
+      <div class="toolbar">
+        <label class="search">
+          <span aria-hidden="true">⌕</span>
+          <span class="sr-only">Filter services</span>
+          <input id="service-filter" type="search" placeholder="Filter services…" autocomplete="off">
+          <kbd>Ctrl K</kbd>
+        </label>
+        <button class="button button-quiet" type="button" data-copy-page>Copy portal URL</button>
+      </div>
+
+      <section class="service-group" aria-labelledby="control-plane-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">01</p>
+            <h2 id="control-plane-heading">Control plane</h2>
+          </div>
+          <p>Automation, source, and orchestration</p>
+        </div>
+
+        <div class="card-grid">
+          <article class="service-card" data-search="awx automation controller web ui jobs templates">
+            <div class="card-top">
+              <span class="service-icon icon-teal">A</span>
+              <span class="badge badge-live">Live</span>
+            </div>
+            <h3>AWX Controller</h3>
+            <p>Launch WebSphere jobs, inspect inventory, and review execution output.</p>
+            <code class="endpoint" data-endpoint data-protocol="http" data-port="32000" data-path="/">http://10.71.1.144:32000/</code>
+            <div class="card-actions">
+              <a class="text-link" data-service-link data-protocol="http" data-port="32000" data-path="/" href="http://10.71.1.144:32000/">Open <span>↗</span></a>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy</button>
+            </div>
+          </article>
+
+          <article class="service-card" data-search="awx rest api automation json">
+            <div class="card-top">
+              <span class="service-icon icon-blue">API</span>
+              <span class="badge badge-live">Live</span>
+            </div>
+            <h3>AWX REST API</h3>
+            <p>Programmatic controller access, status, inventories, and job resources.</p>
+            <code class="endpoint" data-endpoint data-protocol="http" data-port="32000" data-path="/api/v2/">http://10.71.1.144:32000/api/v2/</code>
+            <div class="card-actions">
+              <a class="text-link" data-service-link data-protocol="http" data-port="32000" data-path="/api/v2/" href="http://10.71.1.144:32000/api/v2/">Open <span>↗</span></a>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy</button>
+            </div>
+          </article>
+
+          <article class="service-card featured" data-search="awx simple existing application ear war release deploy survey rollback logs">
+            <div class="card-top">
+              <span class="service-icon icon-green">EAR</span>
+              <span class="badge badge-live">Ready</span>
+            </div>
+            <h3>Simple Existing-App Release</h3>
+            <p>Launch <strong>WAS - Update Existing Application</strong> for the documented four-field pipeline with live progress and WAS logs. <strong>WAS - Deploy Clustered EAR</strong> remains available for approval-gated ND releases.</p>
+            <code class="endpoint" data-endpoint data-protocol="http" data-port="32000" data-path="/#/templates">http://10.71.1.144:32000/#/templates</code>
+            <div class="card-actions">
+              <a class="text-link" data-service-link data-protocol="http" data-port="32000" data-path="/#/templates" href="http://10.71.1.144:32000/#/templates">Open templates <span>&nearr;</span></a>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy</button>
+            </div>
+          </article>
+
+          <article class="service-card" data-search="git scm source repository ansible project">
+            <div class="card-top">
+              <span class="service-icon icon-violet">G</span>
+              <span class="badge badge-live">Live</span>
+            </div>
+            <h3>Ansible Git Project</h3>
+            <p>Read-only repository synchronized by the AWX project.</p>
+            <code class="endpoint" data-endpoint data-protocol="git" data-port="9418" data-path="/was-lab.git">git://10.71.1.144:9418/was-lab.git</code>
+            <div class="card-actions">
+              <span class="text-muted">Git protocol</span>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy clone URL</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="service-group" aria-labelledby="base-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">02</p>
+            <h2 id="base-heading">IBM WebSphere Base ILAN</h2>
+          </div>
+          <p>Genuine traditional WAS 9.0.5.28 and wsadmin.sh</p>
+        </div>
+
+        <div class="card-grid">
+          <article class="service-card featured" data-search="ibm websphere base ilan admin console genuine traditional https 9143">
+            <div class="card-top">
+              <span class="service-icon icon-amber">B</span>
+              <span class="badge badge-live">Live</span>
+            </div>
+            <h3>Base Admin Console</h3>
+            <p>HTTPS administration for the official IBM AppSrv01 Base profile.</p>
+            <code class="endpoint" data-endpoint data-protocol="https" data-port="9143" data-path="/ibm/console">https://10.71.1.144:9143/ibm/console</code>
+            <div class="card-actions">
+              <a class="text-link" data-service-link data-protocol="https" data-port="9143" data-path="/ibm/console" href="https://10.71.1.144:9143/ibm/console">Open <span>&nearr;</span></a>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy</button>
+            </div>
+          </article>
+
+          <article class="service-card" data-search="ibm websphere base admin console http 9160">
+            <div class="card-top">
+              <span class="service-icon icon-amber">B</span>
+              <span class="badge badge-live">Live</span>
+            </div>
+            <h3>Base Console · HTTP</h3>
+            <p>Unencrypted lab-only administration endpoint.</p>
+            <code class="endpoint" data-endpoint data-protocol="http" data-port="9160" data-path="/ibm/console">http://10.71.1.144:9160/ibm/console</code>
+            <div class="card-actions">
+              <a class="text-link" data-service-link data-protocol="http" data-port="9160" data-path="/ibm/console" href="http://10.71.1.144:9160/ibm/console">Open <span>&nearr;</span></a>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy</button>
+            </div>
+          </article>
+
+          <article class="service-card featured" data-search="websphere base sample app war deployed http https 9180 9543">
+            <div class="card-top">
+              <span class="service-icon icon-green">APP</span>
+              <span class="badge badge-live">Deployed</span>
+            </div>
+            <h3>Base Sample App</h3>
+            <p>WAR installed, started, and idempotency-tested through the collection.</p>
+            <code class="endpoint" data-endpoint data-protocol="http" data-port="9180" data-path="/was-lab-base/">http://10.71.1.144:9180/was-lab-base/</code>
+            <div class="card-actions split-actions">
+              <a class="text-link" data-service-link data-protocol="http" data-port="9180" data-path="/was-lab-base/" href="http://10.71.1.144:9180/was-lab-base/">HTTP <span>&nearr;</span></a>
+              <a class="text-link" data-service-link data-protocol="https" data-port="9543" data-path="/was-lab-base/" href="https://10.71.1.144:9543/was-lab-base/">HTTPS <span>&nearr;</span></a>
+            </div>
+          </article>
+
+          <article class="service-card" data-search="websphere base genuine wsadmin soap 8880 jython">
+            <div class="card-top">
+              <span class="service-icon icon-rose">S</span>
+              <span class="badge badge-live">Verified</span>
+            </div>
+            <h3>Base wsadmin SOAP</h3>
+            <p>Connector exercised by genuine AppSrv01/bin/wsadmin.sh and Jython.</p>
+            <code class="endpoint" data-plain-endpoint data-port="8880">10.71.1.144:8880</code>
+            <div class="card-actions">
+              <span class="text-muted">SOAP connector</span>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy endpoint</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="service-group" aria-labelledby="cell-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">03</p>
+            <h2 id="cell-heading">WebSphere ND cell</h2>
+          </div>
+          <p>Deployment manager and administrative access</p>
+        </div>
+
+        <div class="card-grid">
+          <article class="service-card featured" data-search="websphere was admin console deployment manager dmgr https">
+            <div class="card-top">
+              <span class="service-icon icon-amber">W</span>
+              <span class="badge badge-gated">Media gated</span>
+            </div>
+            <h3>WAS Admin Console</h3>
+            <p>Primary HTTPS console for LabCell01 and AppCluster01 administration.</p>
+            <code class="endpoint" data-endpoint data-protocol="https" data-port="9043" data-path="/ibm/console">https://10.71.1.144:9043/ibm/console</code>
+            <div class="card-actions">
+              <a class="text-link" data-service-link data-protocol="https" data-port="9043" data-path="/ibm/console" href="https://10.71.1.144:9043/ibm/console">Open <span>↗</span></a>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy</button>
+            </div>
+          </article>
+
+          <article class="service-card" data-search="websphere was admin console http deployment manager">
+            <div class="card-top">
+              <span class="service-icon icon-amber">W</span>
+              <span class="badge badge-gated">Media gated</span>
+            </div>
+            <h3>WAS Console · HTTP</h3>
+            <p>Unencrypted lab-only console endpoint for local troubleshooting.</p>
+            <code class="endpoint" data-endpoint data-protocol="http" data-port="9060" data-path="/ibm/console">http://10.71.1.144:9060/ibm/console</code>
+            <div class="card-actions">
+              <a class="text-link" data-service-link data-protocol="http" data-port="9060" data-path="/ibm/console" href="http://10.71.1.144:9060/ibm/console">Open <span>↗</span></a>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy</button>
+            </div>
+          </article>
+
+          <article class="service-card" data-search="wsadmin soap deployment manager dmgr 8879">
+            <div class="card-top">
+              <span class="service-icon icon-rose">S</span>
+              <span class="badge badge-gated">Media gated</span>
+            </div>
+            <h3>wsadmin SOAP</h3>
+            <p>Connector used by the genuine Dmgr01 wsadmin.sh automation path.</p>
+            <code class="endpoint" data-plain-endpoint data-port="8879">10.71.1.144:8879</code>
+            <div class="card-actions">
+              <span class="text-muted">SOAP connector</span>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy endpoint</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="service-group" aria-labelledby="traffic-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">04</p>
+            <h2 id="traffic-heading">Applications &amp; traffic</h2>
+          </div>
+          <p>Load-balanced and direct member access</p>
+        </div>
+
+        <div class="card-grid">
+          <article class="service-card featured" data-search="cluster sample application haproxy load balanced was lab">
+            <div class="card-top">
+              <span class="service-icon icon-green">LB</span>
+              <span class="badge badge-gated">After deployment</span>
+            </div>
+            <h3>Clustered Sample App</h3>
+            <p>Round-robin entry point across Node01 and Node02 through HAProxy.</p>
+            <code class="endpoint" data-endpoint data-protocol="http" data-port="8080" data-path="/was-lab/">http://10.71.1.144:8080/was-lab/</code>
+            <div class="card-actions">
+              <a class="text-link" data-service-link data-protocol="http" data-port="8080" data-path="/was-lab/" href="http://10.71.1.144:8080/was-lab/">Open <span>↗</span></a>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy</button>
+            </div>
+          </article>
+
+          <article class="service-card" data-search="haproxy statistics health load balancer backend">
+            <div class="card-top">
+              <span class="service-icon icon-green">H</span>
+              <span class="badge badge-gated">Media gated</span>
+            </div>
+            <h3>HAProxy Statistics</h3>
+            <p>Backend health, request totals, sessions, and member availability.</p>
+            <code class="endpoint" data-endpoint data-protocol="http" data-port="8404" data-path="/stats">http://10.71.1.144:8404/stats</code>
+            <div class="card-actions">
+              <a class="text-link" data-service-link data-protocol="http" data-port="8404" data-path="/stats" href="http://10.71.1.144:8404/stats">Open <span>↗</span></a>
+              <button class="copy-link" type="button" data-copy-endpoint>Copy</button>
+            </div>
+          </article>
+
+          <article class="service-card" data-search="node01 node 1 direct application http https 9081 9444">
+            <div class="card-top">
+              <span class="service-icon icon-cyan">N1</span>
+              <span class="badge badge-gated">Media gated</span>
+            </div>
+            <h3>Node01 · Direct</h3>
+            <p>Bypass the load balancer to test the first cluster member directly.</p>
+            <code class="endpoint" data-endpoint data-protocol="http" data-port="9081" data-path="/was-lab/">http://10.71.1.144:9081/was-lab/</code>
+            <div class="card-actions split-actions">
+              <a class="text-link" data-service-link data-protocol="http" data-port="9081" data-path="/was-lab/" href="http://10.71.1.144:9081/was-lab/">HTTP <span>↗</span></a>
+              <a class="text-link" data-service-link data-protocol="https" data-port="9444" data-path="/was-lab/" href="https://10.71.1.144:9444/was-lab/">HTTPS <span>↗</span></a>
+            </div>
+          </article>
+
+          <article class="service-card" data-search="node02 node 2 direct application http https 9082 9445">
+            <div class="card-top">
+              <span class="service-icon icon-cyan">N2</span>
+              <span class="badge badge-gated">Media gated</span>
+            </div>
+            <h3>Node02 · Direct</h3>
+            <p>Bypass the load balancer to test the second cluster member directly.</p>
+            <code class="endpoint" data-endpoint data-protocol="http" data-port="9082" data-path="/was-lab/">http://10.71.1.144:9082/was-lab/</code>
+            <div class="card-actions split-actions">
+              <a class="text-link" data-service-link data-protocol="http" data-port="9082" data-path="/was-lab/" href="http://10.71.1.144:9082/was-lab/">HTTP <span>↗</span></a>
+              <a class="text-link" data-service-link data-protocol="https" data-port="9445" data-path="/was-lab/" href="https://10.71.1.144:9445/was-lab/">HTTPS <span>↗</span></a>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="service-group" aria-labelledby="shell-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">05</p>
+            <h2 id="shell-heading">Shell access</h2>
+          </div>
+          <p>Generated-key SSH entry points</p>
+        </div>
+
+        <div class="command-panel">
+          <div>
+            <span class="command-label">Deployment manager</span>
+            <code data-command data-port="2220">ssh -i .secrets/ansible_lab -p 2220 ansible@10.71.1.144</code>
+            <button type="button" data-copy-command>Copy</button>
+          </div>
+          <div>
+            <span class="command-label">Application node 1</span>
+            <code data-command data-port="2221">ssh -i .secrets/ansible_lab -p 2221 ansible@10.71.1.144</code>
+            <button type="button" data-copy-command>Copy</button>
+          </div>
+          <div>
+            <span class="command-label">Application node 2</span>
+            <code data-command data-port="2222">ssh -i .secrets/ansible_lab -p 2222 ansible@10.71.1.144</code>
+            <button type="button" data-copy-command>Copy</button>
+          </div>
+          <div>
+            <span class="command-label">WebSphere Base AppSrv01</span>
+            <code data-command data-port="2230">ssh -i .secrets/ansible_lab -p 2230 ansible@10.71.1.144</code>
+            <button type="button" data-copy-command>Copy</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="empty-state" hidden>
+        <strong>No services match that filter.</strong>
+        <span>Try AWX, console, node, Git, or SSH.</span>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer-inner">
+        <p>HIGH-CHARITY Lab Hub <span>·</span> Trusted LAN access</p>
+        <p>Portal: <code data-portal-url>http://10.71.1.144:8888/</code></p>
+      </div>
+    </footer>
+
+    <div class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>

@@ -1,0 +1,14 @@
+---
+# Copy this file to .secrets/smtp.yml, fill it in, and rerun:
+#   .\lab.ps1 bootstrap-awx
+name: WAS Team SMTP
+host: smtp.example.com
+port: 587
+username: was-automation@example.com
+password: replace-me
+from_address: was-automation@example.com
+starttls: true
+ssl: false
+default_to:
+  - was-operations@example.com
+  - application-support@example.com

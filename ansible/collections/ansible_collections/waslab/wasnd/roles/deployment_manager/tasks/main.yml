@@ -1,0 +1,91 @@
+---
+- name: Require the injected WebSphere administrative credential
+  ansible.builtin.assert:
+    that:
+      - was_admin_user | length > 0
+      - was_admin_password | length > 0
+    fail_msg: A WebSphere administrative credential is required.
+  no_log: true
+
+- name: Create the deployment-manager profile
+  waslab.wasnd.profile:
+    install_root: "{{ was_install_root }}"
+    profile_name: "{{ was_dmgr_profile_name }}"
+    profile_path: "{{ was_install_root }}/profiles/{{ was_dmgr_profile_name }}"
+    profile_type: dmgr
+    node_name: "{{ was_dmgr_node_name }}"
+    cell_name: "{{ was_cell_name }}"
+    host_name: "{{ was_dmgr_host_name }}"
+    username: "{{ was_admin_user }}"
+    password: "{{ was_admin_password }}"
+    state: present
+  become: true
+  become_user: "{{ was_os_user }}"
+
+- name: Persist encoded SOAP credentials for systemd shutdown
+  waslab.wasnd.soap_credentials:
+    install_root: "{{ was_install_root }}"
+    profile_name: "{{ was_dmgr_profile_name }}"
+    username: "{{ was_admin_user }}"
+    password: "{{ was_admin_password }}"
+    state: present
+  become: true
+  become_user: "{{ was_os_user }}"
+  when: was_systemd_enabled | bool
+
+- name: Install the deployment-manager systemd unit
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ was_systemd_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=IBM WebSphere Deployment Manager {{ was_dmgr_profile_name }}
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=forking
+      User={{ was_os_user }}
+      Group={{ was_os_group }}
+      PIDFile={{ was_install_root }}/profiles/{{ was_dmgr_profile_name }}/logs/dmgr/dmgr.pid
+      ExecStart={{ was_install_root }}/profiles/{{ was_dmgr_profile_name }}/bin/startManager.sh
+      ExecStop={{ was_install_root }}/profiles/{{ was_dmgr_profile_name }}/bin/stopManager.sh
+      Restart=on-failure
+      TimeoutStartSec=300
+      TimeoutStopSec=300
+
+      [Install]
+      WantedBy=multi-user.target
+  become: true
+  when: was_systemd_enabled | bool
+  notify: Reload systemd
+
+- name: Flush systemd configuration before starting the deployment manager
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the deployment-manager systemd unit
+  ansible.builtin.systemd_service:
+    name: "{{ was_systemd_service_name }}"
+    enabled: true
+    state: started
+  become: true
+  when: was_systemd_enabled | bool
+
+- name: Start the deployment manager without systemd
+  ansible.builtin.command:
+    argv:
+      - "{{ was_install_root }}/profiles/{{ was_dmgr_profile_name }}/bin/startManager.sh"
+  become: true
+  become_user: "{{ was_os_user }}"
+  register: was_dmgr_start
+  changed_when: "'ADMU3000I' in was_dmgr_start.stdout"
+  failed_when: was_dmgr_start.rc not in [0, 1]
+  when: not (was_systemd_enabled | bool)
+
+- name: Wait for the deployment-manager SOAP connector
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ was_dmgr_soap_port }}"
+    timeout: 300

@@ -1,0 +1,34 @@
+---
+- name: Report that an approved release was not deployed
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../vars/was_application_catalog.yml
+  vars:
+    was_release_application_key: "{{ deployment_application | default('unknown') }}"
+    was_release_version: "{{ deployment_version | default('unknown') }}"
+    was_release_expected_checksum: "{{ deployment_sha256 | default('unknown') }}"
+    was_release_change_ticket: "{{ change_ticket | default('unknown') }}"
+    was_release_requested_by: "{{ requested_by | default('unknown') }}"
+    was_release_notification_email_to: "{{ notification_email_to | default('') }}"
+    was_release_strategy: "{{ deployment_strategy | default('maintenance') }}"
+    was_release_auto_rollback: "{{ auto_rollback | default(true) | bool }}"
+    was_release_send_email: "{{ send_email | default(true) | bool }}"
+    was_release_notes: "{{ release_notes | default('') }}"
+    was_release_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    was_release_status: NOT_DEPLOYED
+    was_release_phase: approval rejected or expired
+    was_release_error:
+      message: The AWX workflow approval was rejected, denied, or expired.
+    was_release_rollback_outcome: not applicable
+    was_awx_public_url: "{{ awx_public_url | default(was_release_defaults.awx_public_url) }}"
+  tasks:
+    - name: Select catalog data when the application key is known
+      ansible.builtin.set_fact:
+        was_release_app: >-
+          {{ was_application_catalog[was_release_application_key] |
+             default({'was_name': was_release_application_key, 'cluster': 'unknown'}) }}
+
+    - name: Persist and optionally email the nondeployment report
+      ansible.builtin.include_tasks: ../tasks/was_ear_report.yml

@@ -1,0 +1,18 @@
+---
+requires_ansible: ">=2.15.0"
+action_groups:
+  wasnd:
+    - installation
+    - profile
+    - profile_runtime
+    - federation
+    - soap_credentials
+    - cluster
+    - cluster_member
+    - application
+    - application_info
+    - application_export
+    - jvm_heap
+    - node_sync
+    - cell_info
+    - wsadmin
