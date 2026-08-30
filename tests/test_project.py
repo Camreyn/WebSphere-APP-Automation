@@ -149,7 +149,8 @@ def test_wasnd_collection_has_expected_public_surface() -> None:
     }.issubset(modules)
     roles = {path.name for path in (collection / "roles").iterdir() if path.is_dir()}
     assert {
-        "install", "deployment_manager", "managed_node", "cell", "rolling_restart", "collect_logs",
+        "install", "deployment_manager", "managed_node", "cell", "rolling_restart",
+        "wave_reboot", "collect_logs",
     }.issubset(roles)
 
 
@@ -215,6 +216,107 @@ def test_base_startup_uses_live_application_discovery() -> None:
     assert "state: started" in playbook
     assert "was_application_catalog" not in playbook
     assert "Display the complete startup report in the AWX job log" in playbook
+
+
+def test_wave_reboot_runs_node_pairs_in_parallel_with_a_hard_wave_gate() -> None:
+    playbook = yaml.safe_load_all(
+        (ROOT / "ansible" / "playbooks" / "was_wave_reboot.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    plays = list(playbook)[0]
+    assert [play["hosts"] for play in plays] == [
+        "localhost", "was_maintenance_wave_1", "was_maintenance_wave_2"
+    ]
+    assert plays[1]["strategy"] == "free"
+    assert plays[2]["strategy"] == "free"
+    assert "Node 2" in plays[1]["name"]
+    assert "Node 1" in plays[2]["name"]
+    gate = str(plays[2]["pre_tasks"])
+    assert "was_maintenance_host_recovered" in gate
+    preflight = str(plays[0]["tasks"])
+    assert "was_maintenance_require_dmgr_on_wave_2" in preflight
+    assert "was_maintenance_hosts_dmgr" in preflight
+
+    role_tasks = yaml.safe_load(
+        (
+            ROOT / "ansible" / "collections" / "ansible_collections" / "waslab"
+            / "wasnd" / "roles" / "wave_reboot" / "tasks" / "main.yml"
+        ).read_text(encoding="utf-8")
+    )
+    combined = str(role_tasks)
+    task_names = [task["name"] for task in role_tasks]
+    assert "was_maintenance_allow_reboot" in combined
+    assert "ansible.builtin.reboot" in combined
+    assert "was_maintenance_health_urls" in combined
+    assert task_names.index("Stop the co-located deployment manager last") < task_names.index(
+        "Reboot the operating system and wait for its Ansible connection"
+    )
+    assert task_names.index(
+        "Reboot the operating system and wait for its Ansible connection"
+    ) < task_names.index("Start the co-located deployment manager first after reboot")
+    assert task_names.index(
+        "Start the co-located deployment manager first after reboot"
+    ) < task_names.index("Wait for the recovered deployment-manager SOAP connector")
+    assert task_names.index(
+        "Wait for the recovered deployment-manager SOAP connector"
+    ) < task_names.index("Start the node agent after reboot")
+
+    inventory = yaml.safe_load(
+        (ROOT / "ansible" / "inventory" / "lab.yml").read_text(encoding="utf-8")
+    )
+    hosts = inventory["all"]["children"]["was_nodes"]["hosts"]
+    assert hosts["was-node2"]["was_maintenance_wave"] == 1
+    assert hosts["was-node1"]["was_maintenance_wave"] == 2
+
+
+def test_github_aap_bootstrap_configures_project_template_and_shared_survey() -> None:
+    config_path = ROOT / "config" / "aap" / "wave_reboot.yml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert config["template"]["name"] == "WAS - Reboot Nodes by Wave"
+    assert (ROOT / config["template"]["playbook"]).is_file()
+    assert (ROOT / "ansible" / config["template"]["local_lab_playbook"]).is_file()
+    survey_variables = {question["variable"] for question in config["survey"]["spec"]}
+    assert {
+        "was_maintenance_allow_reboot",
+        "maintenance_inventory_group",
+        "was_maintenance_require_health_checks",
+        "was_maintenance_reboot_timeout",
+        "was_maintenance_dmgr_start_timeout",
+    }.issubset(survey_variables)
+    authorization = next(
+        question
+        for question in config["survey"]["spec"]
+        if question["variable"] == "was_maintenance_allow_reboot"
+    )
+    assert authorization["type"] == "multiplechoice"
+    assert authorization["default"] == "false"
+
+    workflow = (
+        ROOT / ".github" / "workflows" / "configure-aap-wave-reboot.yml"
+    ).read_text(encoding="utf-8")
+    for required_text in (
+        "workflow_dispatch:",
+        "secrets.AAP_HOST",
+        "secrets.AAP_OAUTH_TOKEN",
+        "AAP_JOB_CREDENTIALS",
+        "tools/configure_aap_wave_reboot.py",
+    ):
+        assert required_text in workflow
+
+    configurator = (ROOT / "tools" / "configure_aap_wave_reboot.py").read_text(
+        encoding="utf-8"
+    )
+    for endpoint in ("projects", "job_templates", "survey_spec", "credentials"):
+        assert endpoint in configurator
+
+    local_bootstrap = (ROOT / "tools" / "awx_bootstrap.py").read_text(encoding="utf-8")
+    assert '"config" / "aap" / "wave_reboot.yml"' in local_bootstrap
+    assert "templates[wave_template_name]" in local_bootstrap
+    assert "ensure_survey" in local_bootstrap
+
+    root_ansible_config = (ROOT / "ansible.cfg").read_text(encoding="utf-8")
+    assert "collections_path = ansible/collections" in root_ansible_config
 
 
 def test_clustered_release_workflow_surface() -> None:

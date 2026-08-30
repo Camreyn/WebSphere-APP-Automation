@@ -1,0 +1,41 @@
+---
+# Rebooting a host is intentionally opt-in. Set this in protected AWX extra
+# variables (or an equivalent vaulted/group variable) for an authorized run.
+was_maintenance_allow_reboot: false
+
+was_maintenance_dmgr_host: "{{ (groups.get('was_dmgr', []) | first) | default('') }}"
+was_maintenance_dmgr_install_root: "{{ was_install_root }}"
+was_maintenance_dmgr_profile_name: Dmgr01
+was_maintenance_dmgr_soap_host: localhost
+was_maintenance_dmgr_soap_port: 8879
+was_maintenance_dmgr_os_user: was
+was_maintenance_hosts_dmgr: false
+was_maintenance_dmgr_start_timeout: 600
+was_maintenance_dmgr_soap_timeout: 600
+
+was_maintenance_node_profile_name: AppSrv01
+was_maintenance_node_os_user: was
+
+# When this list is empty, the role builds one member from was_cluster_name,
+# was_node_name, and was_server_name. Use the list form when one OS host owns
+# more than one managed server.
+was_maintenance_members: []
+
+# These must address the member on this host directly. A load-balanced URL can
+# hide a failed recovery by returning 200 from the partner node.
+was_maintenance_health_urls: []
+was_maintenance_require_health_checks: true
+was_maintenance_health_retries: 30
+was_maintenance_health_delay: 10
+was_maintenance_validate_certs: true
+
+was_maintenance_member_stop_retries: 30
+was_maintenance_member_stop_delay: 5
+was_maintenance_member_start_retries: 30
+was_maintenance_member_start_delay: 10
+
+was_maintenance_reboot_timeout: 1800
+was_maintenance_reboot_connect_timeout: 10
+was_maintenance_pre_reboot_delay: 0
+was_maintenance_post_reboot_delay: 15
+was_maintenance_reboot_test_command: whoami

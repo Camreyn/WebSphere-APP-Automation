@@ -450,6 +450,81 @@ Application runtime states can be managed separately:
 The role restarts members in the listed order. When a health URL is supplied,
 it waits for HTTP 200 before advancing to the next member.
 
+### Reboot two-node application pairs by wave
+
+Use `playbooks/was_wave_reboot.yml` when several independent applications each
+have a Node 1/Node 2 pair and the Dmgr is co-located on Node 1. It runs every
+Node 2 host concurrently while the Dmgrs remain online, waits for all of them
+to finish their complete maintenance sequence, and only then runs every Node 1
+host concurrently. A failed Node 2 recovery blocks all Node 1 work.
+
+Assign the wave and direct, node-specific health endpoints in inventory. The
+endpoint must not pass through a load balancer that could answer from the
+partner node:
+
+```yaml
+was_nodes:
+  hosts:
+    app1_node1:
+      was_node_name: App1Node01
+      was_cluster_name: App1Cluster
+      was_server_name: server1
+      was_maintenance_wave: 2
+      was_maintenance_hosts_dmgr: true
+      was_maintenance_dmgr_host: app1_node1
+      was_maintenance_health_urls:
+        - https://app1-node1.example.test/app1/health
+    app1_node2:
+      was_node_name: App1Node02
+      was_cluster_name: App1Cluster
+      was_server_name: server1
+      was_maintenance_wave: 1
+      was_maintenance_dmgr_host: app1_node1
+      was_maintenance_health_urls:
+        - https://app1-node2.example.test/app1/health
+    app2_node1:
+      was_node_name: App2Node01
+      was_cluster_name: App2Cluster
+      was_server_name: server1
+      was_maintenance_wave: 2
+      was_maintenance_hosts_dmgr: true
+      was_maintenance_dmgr_host: app2_node1
+      was_maintenance_health_urls:
+        - https://app2-node1.example.test/app2/health
+    app2_node2:
+      was_node_name: App2Node02
+      was_cluster_name: App2Cluster
+      was_server_name: server1
+      was_maintenance_wave: 1
+      was_maintenance_dmgr_host: app2_node1
+      was_maintenance_health_urls:
+        - https://app2-node2.example.test/app2/health
+```
+
+For a host with multiple managed servers, set `was_maintenance_members` to a
+list of `cluster`, `node`, and `name` mappings and list every application health
+endpoint in `was_maintenance_health_urls`. Authorize the disruptive action only
+for the intended run:
+
+```bash
+ansible-playbook playbooks/was_wave_reboot.yml \
+  -e was_maintenance_allow_reboot=true
+```
+
+The role stops each managed server, stops the node agent, uses Ansible's reboot
+operation (which waits for the connection to return), starts the node agent and
+managed servers, and verifies all direct health endpoints. On a host with
+`was_maintenance_hosts_dmgr: true`, it stops Dmgr after the managed runtime,
+starts Dmgr before the node agent, and waits for the Dmgr SOAP port before using
+wsadmin. Preflight rejects a co-located Dmgr in wave 1 and, by default, requires
+every wave-2 host to declare `was_maintenance_hosts_dmgr: true`. Set
+`was_maintenance_require_dmgr_on_wave_2: false` only for a topology with a
+separate Dmgr host. Configure the controller's Ansible fork count to at least
+the number of hosts in the larger wave if every host must run simultaneously.
+Integrate load-balancer drain and return-to-service controls around the role
+when the production load balancer does not remove a stopped member
+automatically.
+
 ### Collect profile logs
 
 ```yaml
@@ -623,6 +698,7 @@ was_node_systemd_service_name: was-nodeagent-appsrv01
 | `waslab.wasnd.managed_node` | Each application host | Create managed profile, federate it, start node agent | `was_node_profile_name`, `was_node_name`, `was_dmgr_host`, credentials |
 | `waslab.wasnd.cell` | Dmgr host | Create declared clusters/members and synchronize changed nodes | `was_clusters`, `was_sync_after_cell_change` |
 | `waslab.wasnd.rolling_restart` | Dmgr host | Restart members sequentially with optional HTTP health gate | `was_cluster_members`, `was_rolling_health_url`, retry settings |
+| `waslab.wasnd.wave_reboot` | Each managed-node host | Stop, reboot, recover, and directly health-check one host; optionally recover a co-located Dmgr first | `was_maintenance_wave`, `was_maintenance_hosts_dmgr`, `was_maintenance_members`, `was_maintenance_health_urls`, reboot authorization/timeouts |
 | `waslab.wasnd.collect_logs` | Any WAS host | Archive and fetch profile logs | `was_profile_name`, `was_log_destination`, `was_log_archive_path` |
 
 The install role manages packages by default and recursively assigns the WAS

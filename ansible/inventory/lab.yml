@@ -27,6 +27,8 @@ all:
         was-node1:
           ansible_host: 172.29.0.21
           was_node_name: Node01
+          was_maintenance_wave: 2
         was-node2:
           ansible_host: 172.29.0.22
           was_node_name: Node02
+          was_maintenance_wave: 1

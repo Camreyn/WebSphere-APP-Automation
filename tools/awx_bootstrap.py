@@ -221,6 +221,16 @@ def bootstrap(api: AwxApi, root: pathlib.Path) -> None:
     api.wait_ready()
     api.authenticate()
 
+    wave_reboot_config = read_optional_yaml(root / "config" / "aap" / "wave_reboot.yml")
+    if wave_reboot_config is None:
+        raise RuntimeError("config/aap/wave_reboot.yml is required")
+    wave_template_config = wave_reboot_config.get("template")
+    wave_survey = wave_reboot_config.get("survey")
+    if not isinstance(wave_template_config, dict) or not isinstance(wave_survey, dict):
+        raise RuntimeError("Wave-reboot config requires template and survey mappings")
+    wave_template_name = str(wave_template_config["name"])
+    wave_local_playbook = str(wave_template_config["local_lab_playbook"])
+
     organization = api.ensure(
         "/api/v2/organizations/",
         "WAS Lab",
@@ -260,8 +270,16 @@ def bootstrap(api: AwxApi, root: pathlib.Path) -> None:
             "was_soap_port": 8880,
         },
         "was-dmgr": {"ansible_host": "172.29.0.20"},
-        "was-node1": {"ansible_host": "172.29.0.21", "was_node_name": "Node01"},
-        "was-node2": {"ansible_host": "172.29.0.22", "was_node_name": "Node02"},
+        "was-node1": {
+            "ansible_host": "172.29.0.21",
+            "was_node_name": "Node01",
+            "was_maintenance_wave": 2,
+        },
+        "was-node2": {
+            "ansible_host": "172.29.0.22",
+            "was_node_name": "Node02",
+            "was_maintenance_wave": 1,
+        },
     }
     hosts: dict[str, dict[str, Any]] = {}
     for name, variables in host_definitions.items():
@@ -458,17 +476,24 @@ def bootstrap(api: AwxApi, root: pathlib.Path) -> None:
         ("WAS - Stop Cluster", "playbooks/was_stop_cluster.yml", False),
         ("WAS - Synchronize Nodes", "playbooks/was_sync_nodes.yml", False),
         ("WAS - Rolling Restart", "playbooks/was_rolling_restart.yml", False),
+        (wave_template_name, wave_local_playbook, False),
         ("WAS - Deploy Sample Application", "playbooks/was_deploy_sample.yml", False),
         ("WAS - Set JVM Heap", "playbooks/was_set_jvm_heap.yml", True),
         ("WAS - Collect Logs", "playbooks/was_collect_logs.yml", False),
         ("WAS - Health Check", "playbooks/was_healthcheck.yml", False),
     ]
+    templates: dict[str, dict[str, Any]] = {}
     for name, playbook, ask_variables in template_definitions:
+        is_wave_reboot = name == wave_template_name
         template = api.ensure(
             "/api/v2/job_templates/",
             name,
             {
-                "description": f"Managed by tools/awx_bootstrap.py: {playbook}",
+                "description": (
+                    str(wave_template_config["description"])
+                    if is_wave_reboot
+                    else f"Managed by tools/awx_bootstrap.py: {playbook}"
+                ),
                 "job_type": "run",
                 "inventory": inventory["id"],
                 "project": project["id"],
@@ -476,9 +501,11 @@ def bootstrap(api: AwxApi, root: pathlib.Path) -> None:
                 "execution_environment": execution_environment["id"],
                 "verbosity": 1,
                 "ask_variables_on_launch": ask_variables,
+                "survey_enabled": is_wave_reboot,
             },
             filters={"organization": organization["id"]},
         )
+        templates[name] = template
         api.associate(
             f"/api/v2/job_templates/{template['id']}/credentials/",
             machine_credential["id"],
@@ -487,6 +514,8 @@ def bootstrap(api: AwxApi, root: pathlib.Path) -> None:
             f"/api/v2/job_templates/{template['id']}/credentials/",
             was_credential["id"],
         )
+
+    ensure_survey(api, templates[wave_template_name]["url"], wave_survey)
 
     operator_template = api.ensure(
         "/api/v2/job_templates/",

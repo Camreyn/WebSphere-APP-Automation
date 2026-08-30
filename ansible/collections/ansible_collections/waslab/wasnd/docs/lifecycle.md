@@ -33,9 +33,15 @@ client.
 - `wsadmin`: transfer and run a caller-supplied Jython script through genuine
   `wsadmin.sh`.
 
-The `rolling_restart` role processes members serially and the `collect_logs`
-role gathers selected profile logs. Optional Dmgr and node-agent systemd units
-are disabled by default because container lab hosts do not use systemd.
+The `rolling_restart` role processes members serially. The `wave_reboot` role
+performs one host's clean member stop, operating-system reboot, runtime start,
+and direct application health checks. When the host owns the Dmgr, the role
+stops it last and starts it first, then waits for SOAP before recovering the
+node runtime. The companion playbook runs all Node 2 hosts concurrently while
+their Node 1 Dmgrs remain online, then allows Node 1 to start. The
+`collect_logs` role gathers selected profile logs. Optional Dmgr and node-agent
+systemd units are disabled by default because container lab hosts do not use
+systemd.
 
 ## Removal safety
 

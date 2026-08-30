@@ -127,8 +127,9 @@ approval, rollback, and error-reporting details, see the
 ## AWX job templates
 
 The templates cover Base status/wsadmin, Base sample deployment and health,
-plus ND status, start, stop, node synchronization, rolling member
-restart, sample deployment, JVM heap changes, log collection, HTTP health
+plus ND status, start, stop, node synchronization, rolling member restart,
+parallel Node 2 then Node 1 operating-system reboot waves, sample deployment,
+JVM heap changes, log collection, HTTP health
 checks, and three clustered-release phases. The `WAS - Deploy Clustered EAR`
 workflow connects validation to an operator approval and then deployment or a
 nondeployment report. Administrative jobs target `was-dmgr` and use fully qualified
@@ -140,6 +141,22 @@ nondeployment report. Administrative jobs target `was-dmgr` and use fully qualif
 
 The scripts use IBM `AdminConfig`, `AdminControl`, `AdminTask`, and `AdminApp`
 objects through Jython. They do not simulate a WAS API.
+
+`WAS - Reboot Nodes by Wave` is guarded by
+`was_maintenance_allow_reboot: true`. Each inventory host must declare wave 1
+or 2 plus direct application health URLs. Node 2 is wave 1, so each Node 1 Dmgr
+remains available while its partner reboots. Node 1 is wave 2 and sets
+`was_maintenance_hosts_dmgr: true`; the role stops Dmgr last, starts it first,
+and waits for SOAP before recovering WebSphere. Wave 2 is blocked unless every
+wave-1 host stopped, rebooted, restarted, and passed health checks. The Docker
+lab records the wave metadata for illustration but intentionally has no direct
+reboot-health configuration, because its containers are not production
+operating-system reboot targets.
+
+The local bootstrap and GitHub Actions bootstrap both read the shared template
+and survey definition from `config/aap/wave_reboot.yml`. See
+[`GITHUB_AAP_SETUP.md`](GITHUB_AAP_SETUP.md) for the repository environment,
+token, inventory, credential, project, and runner settings.
 
 ## Daily commands
 

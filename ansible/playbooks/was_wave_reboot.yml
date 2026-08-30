@@ -1,0 +1,140 @@
+---
+- name: Build the two maintenance waves from inventory metadata
+  hosts: localhost
+  gather_facts: false
+  vars:
+    was_maintenance_inventory_group: "{{ maintenance_inventory_group | default('was_nodes') }}"
+    was_maintenance_inventory_hosts: "{{ groups.get(was_maintenance_inventory_group, []) }}"
+  tasks:
+    - name: Require a nonempty maintenance inventory group
+      ansible.builtin.assert:
+        that:
+          - was_maintenance_inventory_hosts | length > 0
+        fail_msg: >-
+          The requested maintenance inventory group is empty or missing:
+          {{ was_maintenance_inventory_group }}
+
+    - name: Require each host to declare maintenance wave 1 or 2
+      ansible.builtin.assert:
+        that:
+          - hostvars[was_maintenance_inventory_host].was_maintenance_wave is defined
+          - hostvars[was_maintenance_inventory_host].was_maintenance_wave | int in [1, 2]
+        fail_msg: >-
+          {{ was_maintenance_inventory_host }} must set was_maintenance_wave to 1 or 2.
+      loop: "{{ was_maintenance_inventory_hosts }}"
+      loop_control:
+        loop_var: was_maintenance_inventory_host
+
+    - name: Preflight every host before allowing the first disruptive task
+      ansible.builtin.assert:
+        that:
+          - >-
+            hostvars[was_maintenance_inventory_host].was_maintenance_allow_reboot
+            | default(was_maintenance_allow_reboot | default(false)) | bool
+          - >-
+            hostvars[was_maintenance_inventory_host].was_maintenance_dmgr_host
+            | default((groups.get('was_dmgr', []) | first) | default(''))
+            | length > 0
+          - >-
+            (hostvars[was_maintenance_inventory_host].was_maintenance_members
+             | default([]) | length > 0) or
+            (
+              hostvars[was_maintenance_inventory_host].was_cluster_name is defined and
+              hostvars[was_maintenance_inventory_host].was_node_name is defined and
+              hostvars[was_maintenance_inventory_host].was_server_name is defined
+            )
+          - >-
+            not (
+              hostvars[was_maintenance_inventory_host].was_maintenance_require_health_checks
+              | default(true) | bool
+            ) or
+            (
+              hostvars[was_maintenance_inventory_host].was_maintenance_health_urls
+              | default([]) | length > 0
+            )
+          - >-
+            not (
+              hostvars[was_maintenance_inventory_host].was_maintenance_hosts_dmgr
+              | default(false) | bool
+            ) or
+            (
+              hostvars[was_maintenance_inventory_host].was_maintenance_wave | int == 2
+            )
+          - >-
+            not (was_maintenance_require_dmgr_on_wave_2 | default(true) | bool) or
+            (hostvars[was_maintenance_inventory_host].was_maintenance_wave | int != 2) or
+            (
+              hostvars[was_maintenance_inventory_host].was_maintenance_hosts_dmgr
+              | default(false) | bool
+            )
+        fail_msg: >-
+          {{ was_maintenance_inventory_host }} is not ready: authorize reboot,
+          identify its Dmgr/member, configure direct health URLs, and place any
+          co-located Dmgr host in wave 2. By default every wave-2 host must
+          explicitly declare was_maintenance_hosts_dmgr=true. No host has been
+          changed.
+      loop: "{{ was_maintenance_inventory_hosts }}"
+      loop_control:
+        loop_var: was_maintenance_inventory_host
+
+    - name: Preflight the injected WebSphere credential before changing any host
+      ansible.builtin.assert:
+        that:
+          - >-
+            hostvars[was_maintenance_inventory_host].was_admin_user
+            | default(was_admin_user | default('')) | length > 0
+          - >-
+            hostvars[was_maintenance_inventory_host].was_admin_password
+            | default(was_admin_password | default('')) | length > 0
+        fail_msg: A WebSphere administrative credential is required.
+      no_log: true
+      loop: "{{ was_maintenance_inventory_hosts }}"
+      loop_control:
+        loop_var: was_maintenance_inventory_host
+
+    - name: Create the in-memory wave groups
+      ansible.builtin.add_host:
+        name: "{{ was_maintenance_inventory_host }}"
+        groups: >-
+          was_maintenance_wave_{{
+          hostvars[was_maintenance_inventory_host].was_maintenance_wave | int }}
+      loop: "{{ was_maintenance_inventory_hosts }}"
+      loop_control:
+        loop_var: was_maintenance_inventory_host
+        label: >-
+          {{ was_maintenance_inventory_host }} -> wave {{
+          hostvars[was_maintenance_inventory_host].was_maintenance_wave | int }}
+
+    - name: Require at least one host in both waves
+      ansible.builtin.assert:
+        that:
+          - groups.get('was_maintenance_wave_1', []) | length > 0
+          - groups.get('was_maintenance_wave_2', []) | length > 0
+        fail_msg: Both maintenance waves must contain at least one host.
+
+- name: Reboot every Node 2 application host concurrently while Dmgr stays online
+  hosts: was_maintenance_wave_1
+  gather_facts: false
+  strategy: free
+  roles:
+    - role: waslab.wasnd.wave_reboot
+
+- name: Reboot every Node 1 and co-located Dmgr host after Node 2 recovered
+  hosts: was_maintenance_wave_2
+  gather_facts: false
+  strategy: free
+  pre_tasks:
+    - name: Block Node 1 unless every Node 2 host recovered in this run
+      ansible.builtin.assert:
+        that:
+          - >-
+            hostvars[was_maintenance_wave_1_host].was_maintenance_host_recovered
+            | default(false) | bool
+        fail_msg: >-
+          Node 1 is blocked because {{ was_maintenance_wave_1_host }} did not
+          complete its stop, reboot, start, and health sequence.
+      loop: "{{ groups.get('was_maintenance_wave_1', []) }}"
+      loop_control:
+        loop_var: was_maintenance_wave_1_host
+  roles:
+    - role: waslab.wasnd.wave_reboot

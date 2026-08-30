@@ -113,8 +113,12 @@ SOAP.
 The embedded `waslab.wasnd` collection covers installation, profiles,
 federation, SOAP credentials, clusters and members, applications, JVM heap,
 node synchronization, cell inspection, and local Jython scripts. It also
-contains install, deployment-manager, managed-node, cell, rolling-restart, and
-log-collection roles. Destructive states require `allow_destructive: true`.
+contains install, deployment-manager, managed-node, cell, rolling-restart,
+two-wave operating-system reboot, and log-collection roles. The wave reboot
+runs every Node 2 application host concurrently before Node 1, keeping the
+co-located Node 1 Dmgr available for the first wave. It requires explicit
+reboot authorization plus direct per-host health checks. Destructive states
+require `allow_destructive: true`.
 
 ```powershell
 .\lab.ps1 collection-test
@@ -148,6 +152,10 @@ The [existing-application release pipeline](ansible/collections/ansible_collecti
 is the operator and CI runbook for artifact publication, the four-field AWX
 launch, numbered progress stages, logs, statuses, rollback, and production
 controls.
+
+The [GitHub-to-AAP setup guide](docs/GITHUB_AAP_SETUP.md) describes the manual
+GitHub Actions job that idempotently creates or updates the AAP project,
+wave-reboot job template, credential associations, and launch survey.
 
 See [operations](docs/OPERATIONS.md), [fidelity](docs/FIDELITY.md), and
 [licensing](docs/LICENSING.md) for the operating and security boundaries.
