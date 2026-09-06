@@ -49,3 +49,7 @@ Start with the [complete usage guide](docs/usage.md). For production-style
 application updates, use the [clustered EAR/WAR release guide](docs/clustered-ear-releases.md).
 The companion [lifecycle](docs/lifecycle.md) and [security](docs/security.md)
 notes provide shorter design-focused references.
+
+When the collection is used from this repository as an AAP Project, the root
+`setup.yml` playbook and `aap_template_setup` module reconcile the operational
+job templates and surveys from `config/aap/controller_setup.yml`.

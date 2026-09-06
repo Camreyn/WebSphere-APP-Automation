@@ -153,9 +153,10 @@ is the operator and CI runbook for artifact publication, the four-field AWX
 launch, numbered progress stages, logs, statuses, rollback, and production
 controls.
 
-The [GitHub-to-AAP setup guide](docs/GITHUB_AAP_SETUP.md) describes the manual
-GitHub Actions job that idempotently creates or updates the AAP project,
-wave-reboot job template, credential associations, and launch survey.
+The [in-AAP setup guide](docs/AAP_SELF_SETUP.md) describes the one manual
+`setup.yml` job template. Launching it from the imported project idempotently
+creates or updates the operational templates, credential associations, and
+surveys through AAP's own API; no GitHub runner is required.
 
 See [operations](docs/OPERATIONS.md), [fidelity](docs/FIDELITY.md), and
 [licensing](docs/LICENSING.md) for the operating and security boundaries.

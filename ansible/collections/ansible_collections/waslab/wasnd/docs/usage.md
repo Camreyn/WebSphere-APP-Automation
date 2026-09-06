@@ -728,6 +728,7 @@ or filesystem permissions.
 | `release_lock` | Any managed host | Atomically serialize releases per application | Yes | Explicit release |
 | `release_record` | Any managed host | Persist the current and prior known-good immutable release | Yes | N/A |
 | `smtp_report` | Controller or managed host | Send plain/HTML status reports and attachments through SMTP | Yes | N/A |
+| `aap_template_setup` | AAP execution environment | Reconcile this Project's operational templates, credentials, and surveys through the controller API | Yes | N/A |
 
 Use `ansible-doc waslab.wasnd.<module>` for every option and return value.
 
@@ -802,6 +803,15 @@ For AWX or Ansible Automation Platform:
    profile, or log jobs at the appropriate host groups.
 6. Enable job slicing or parallelism only for tasks that are safe to execute
    concurrently. Federate new nodes serially.
+
+When this repository itself is the AAP Project, create one manual setup job
+template whose playbook is the root `setup.yml`. Attach the AAP controller,
+Machine, and protected WebSphere credentials, then launch it to create or
+update the repository-managed operational templates and surveys. The setup job
+inherits its own Project, Inventory, and Execution Environment, and copies only
+the non-controller credentials. See the repository-level
+[`AAP_SELF_SETUP.md`](../../../../../../docs/AAP_SELF_SETUP.md) runbook for the
+exact settings.
 
 The lab's `WAS - Update Existing Application` template is the small operator
 surface: application name, immutable version, change ticket, and optional

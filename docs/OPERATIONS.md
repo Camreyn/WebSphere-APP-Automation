@@ -153,10 +153,11 @@ lab records the wave metadata for illustration but intentionally has no direct
 reboot-health configuration, because its containers are not production
 operating-system reboot targets.
 
-The local bootstrap and GitHub Actions bootstrap both read the shared template
-and survey definition from `config/aap/wave_reboot.yml`. See
-[`GITHUB_AAP_SETUP.md`](GITHUB_AAP_SETUP.md) for the repository environment,
-token, inventory, credential, project, and runner settings.
+The local lab bootstrap and the in-AAP `setup.yml` playbook both read the shared
+template and survey definition from `config/aap/controller_setup.yml`. See
+[`AAP_SELF_SETUP.md`](AAP_SELF_SETUP.md) for the one-time setup job template,
+controller credential, inherited inventory, project, execution environment, and
+operational credential settings.
 
 ## Daily commands
 

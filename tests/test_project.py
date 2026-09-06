@@ -146,6 +146,7 @@ def test_wasnd_collection_has_expected_public_surface() -> None:
         "profile_runtime", "cluster_member", "application", "jvm_heap", "node_sync", "cell_info", "wsadmin",
         "application_info", "application_export", "log_delta",
         "release_artifact", "release_lock", "release_record", "smtp_report",
+        "aap_template_setup",
     }.issubset(modules)
     roles = {path.name for path in (collection / "roles").iterdir() if path.is_dir()}
     assert {
@@ -270,13 +271,21 @@ def test_wave_reboot_runs_node_pairs_in_parallel_with_a_hard_wave_gate() -> None
     assert hosts["was-node1"]["was_maintenance_wave"] == 2
 
 
-def test_github_aap_bootstrap_configures_project_template_and_shared_survey() -> None:
-    config_path = ROOT / "config" / "aap" / "wave_reboot.yml"
+def test_in_aap_setup_configures_templates_credentials_and_shared_surveys() -> None:
+    config_path = ROOT / "config" / "aap" / "controller_setup.yml"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    assert config["template"]["name"] == "WAS - Reboot Nodes by Wave"
-    assert (ROOT / config["template"]["playbook"]).is_file()
-    assert (ROOT / "ansible" / config["template"]["local_lab_playbook"]).is_file()
-    survey_variables = {question["variable"] for question in config["survey"]["spec"]}
+    wave_templates = [
+        template for template in config["templates"]
+        if template["key"] == "wave_reboot"
+    ]
+    assert len(wave_templates) == 1
+    wave_template = wave_templates[0]
+    assert wave_template["name"] == "WAS - Reboot Nodes by Wave"
+    assert (ROOT / wave_template["playbook"]).is_file()
+    assert (ROOT / "ansible" / wave_template["local_lab_playbook"]).is_file()
+    survey_variables = {
+        question["variable"] for question in wave_template["survey"]["spec"]
+    }
     assert {
         "was_maintenance_allow_reboot",
         "maintenance_inventory_group",
@@ -286,32 +295,34 @@ def test_github_aap_bootstrap_configures_project_template_and_shared_survey() ->
     }.issubset(survey_variables)
     authorization = next(
         question
-        for question in config["survey"]["spec"]
+        for question in wave_template["survey"]["spec"]
         if question["variable"] == "was_maintenance_allow_reboot"
     )
     assert authorization["type"] == "multiplechoice"
     assert authorization["default"] == "false"
 
-    workflow = (
-        ROOT / ".github" / "workflows" / "configure-aap-wave-reboot.yml"
-    ).read_text(encoding="utf-8")
+    setup_playbook = (ROOT / "setup.yml").read_text(encoding="utf-8")
     for required_text in (
-        "workflow_dispatch:",
-        "secrets.AAP_HOST",
-        "secrets.AAP_OAUTH_TOKEN",
-        "AAP_JOB_CREDENTIALS",
-        "tools/configure_aap_wave_reboot.py",
+        "CONTROLLER_HOST",
+        "CONTROLLER_OAUTH_TOKEN",
+        "awx_job_template_id",
+        "config/aap/controller_setup.yml",
+        "waslab.wasnd.aap_template_setup",
     ):
-        assert required_text in workflow
+        assert required_text in setup_playbook
 
-    configurator = (ROOT / "tools" / "configure_aap_wave_reboot.py").read_text(
-        encoding="utf-8"
-    )
-    for endpoint in ("projects", "job_templates", "survey_spec", "credentials"):
-        assert endpoint in configurator
+    controller_module = (
+        ROOT / "ansible" / "collections" / "ansible_collections" / "waslab"
+        / "wasnd" / "plugins" / "module_utils" / "_controller.py"
+    ).read_text(encoding="utf-8")
+    for endpoint in ("job_templates", "survey_spec", "credentials"):
+        assert endpoint in controller_module
+    assert not (ROOT / ".github" / "workflows" / "configure-aap-wave-reboot.yml").exists()
+    assert not (ROOT / "tools" / "configure_aap_wave_reboot.py").exists()
+    assert not (ROOT / "requirements-aap-bootstrap.txt").exists()
 
     local_bootstrap = (ROOT / "tools" / "awx_bootstrap.py").read_text(encoding="utf-8")
-    assert '"config" / "aap" / "wave_reboot.yml"' in local_bootstrap
+    assert '"config" / "aap" / "controller_setup.yml"' in local_bootstrap
     assert "templates[wave_template_name]" in local_bootstrap
     assert "ensure_survey" in local_bootstrap
 
