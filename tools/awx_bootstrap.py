@@ -221,13 +221,22 @@ def bootstrap(api: AwxApi, root: pathlib.Path) -> None:
     api.wait_ready()
     api.authenticate()
 
-    wave_reboot_config = read_optional_yaml(root / "config" / "aap" / "wave_reboot.yml")
-    if wave_reboot_config is None:
-        raise RuntimeError("config/aap/wave_reboot.yml is required")
-    wave_template_config = wave_reboot_config.get("template")
-    wave_survey = wave_reboot_config.get("survey")
-    if not isinstance(wave_template_config, dict) or not isinstance(wave_survey, dict):
-        raise RuntimeError("Wave-reboot config requires template and survey mappings")
+    controller_setup = read_optional_yaml(root / "config" / "aap" / "controller_setup.yml")
+    if controller_setup is None:
+        raise RuntimeError("config/aap/controller_setup.yml is required")
+    managed_templates = controller_setup.get("templates")
+    if not isinstance(managed_templates, list):
+        raise RuntimeError("Controller setup config requires a templates list")
+    wave_matches = [
+        item for item in managed_templates
+        if isinstance(item, dict) and item.get("key") == "wave_reboot"
+    ]
+    if len(wave_matches) != 1:
+        raise RuntimeError("Controller setup config requires one wave_reboot template")
+    wave_template_config = wave_matches[0]
+    wave_survey = wave_template_config.get("survey")
+    if not isinstance(wave_survey, dict):
+        raise RuntimeError("The wave_reboot template requires a survey mapping")
     wave_template_name = str(wave_template_config["name"])
     wave_local_playbook = str(wave_template_config["local_lab_playbook"])
 

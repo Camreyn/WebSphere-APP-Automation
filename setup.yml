@@ -1,0 +1,68 @@
+---
+- name: Configure AAP operational templates from this imported project
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    aap_setup_controller_host: >-
+      {{ lookup('ansible.builtin.env', 'CONTROLLER_HOST') }}
+    aap_setup_oauth_token: >-
+      {{ lookup('ansible.builtin.env', 'CONTROLLER_OAUTH_TOKEN') }}
+    aap_setup_controller_username: >-
+      {{ lookup('ansible.builtin.env', 'CONTROLLER_USERNAME') }}
+    aap_setup_controller_password: >-
+      {{ lookup('ansible.builtin.env', 'CONTROLLER_PASSWORD') }}
+    aap_setup_validate_certs: >-
+      {{ lookup('ansible.builtin.env', 'CONTROLLER_VERIFY_SSL')
+         | default('true', true) | bool }}
+    aap_setup_api_prefix: "{{ controller_api_prefix | default('auto') }}"
+    aap_setup_definition_path: "{{ playbook_dir }}/config/aap/controller_setup.yml"
+    aap_setup_has_controller_auth: >-
+      {{ (aap_setup_oauth_token | length > 0) or
+         ((aap_setup_controller_username | length > 0) and
+          (aap_setup_controller_password | length > 0)) }}
+
+  tasks:
+    - name: Validate the setup job context
+      ansible.builtin.assert:
+        that:
+          - aap_setup_controller_host | length > 0
+          - awx_job_template_id is defined
+          - awx_job_template_id | default(0) | int > 0
+        fail_msg: >-
+          Run setup.yml from an AAP job template and attach a Red Hat Ansible
+          Automation Platform credential that targets this AAP instance.
+
+    - name: Validate controller authentication injected by AAP
+      ansible.builtin.assert:
+        that:
+          - aap_setup_has_controller_auth | bool
+        fail_msg: >-
+          The setup template's AAP credential did not inject an OAuth token or
+          a controller username and password.
+
+    - name: Load the repository-owned controller definition
+      ansible.builtin.include_vars:
+        file: "{{ aap_setup_definition_path }}"
+        name: aap_setup_definition
+
+    - name: Create or update operational templates and surveys
+      waslab.wasnd.aap_template_setup:
+        controller_host: "{{ aap_setup_controller_host }}"
+        oauth_token: "{{ aap_setup_oauth_token }}"
+        controller_username: "{{ aap_setup_controller_username }}"
+        controller_password: "{{ aap_setup_controller_password }}"
+        controller_api_prefix: "{{ aap_setup_api_prefix }}"
+        validate_certs: "{{ aap_setup_validate_certs }}"
+        setup_template_id: "{{ awx_job_template_id }}"
+        definition: "{{ aap_setup_definition }}"
+      register: aap_setup_result
+
+    - name: Display the reconciliation report
+      ansible.builtin.debug:
+        msg:
+          api_prefix: "{{ aap_setup_result.api_prefix }}"
+          inherited_context: "{{ aap_setup_result.context }}"
+          copied_operational_credentials: "{{ aap_setup_result.copied_credentials }}"
+          setup_only_credentials: "{{ aap_setup_result.excluded_credentials }}"
+          templates: "{{ aap_setup_result.templates }}"
