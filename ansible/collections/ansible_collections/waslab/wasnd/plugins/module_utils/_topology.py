@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover - Ansible runs this module on Linux host
 
 
 DEFAULT_INSTALL_ROOTS = (
+    "/opt/WebSphere/AppServer",
     "/opt/WebSphere/AppServers",
     "/opt/IBM/WebSphere/AppServer",
     "/opt/ibm/WebSphere/AppServer",
@@ -24,6 +25,22 @@ DEFAULT_INSTALL_ROOTS = (
     "/opt/ibm/Workflow/*",
     "/opt/IBM/BPM/*",
     "/opt/ibm/BPM/*",
+)
+
+COMMON_MANAGED_PROFILE_NAMES = (
+    "appsrv1",
+    "appsrv01",
+    "appsrv2",
+    "appsrv02",
+    "appserver1",
+    "appserver01",
+    "appserver2",
+    "appserver02",
+)
+COMMON_DMGR_PROFILE_NAMES = (
+    "dmgr",
+    "dmgr1",
+    "dmgr01",
 )
 
 
@@ -63,6 +80,7 @@ def parse_about_profile(path):
         return result
     labels = {
         "profile name": "profile_name",
+        "profile type": "profile_type",
         "cell name": "cell",
         "node name": "node",
         "host name": "host",
@@ -78,15 +96,77 @@ def parse_about_profile(path):
     return result
 
 
-def profile_type(profile_path):
+def profile_name_hint(profile_name):
+    normalized = str(profile_name or "").strip().lower()
+    if normalized in COMMON_MANAGED_PROFILE_NAMES:
+        return {"type": "managed", "source": "common_profile_name"}
+    if normalized in COMMON_DMGR_PROFILE_NAMES:
+        return {"type": "dmgr", "source": "common_profile_name"}
+    if normalized.startswith("app"):
+        return {"type": "managed", "source": "profile_name_prefix"}
+    if normalized.startswith("dm"):
+        return {"type": "dmgr", "source": "profile_name_prefix"}
+    return {"type": "unknown", "source": "none"}
+
+
+def profile_type_details(profile_path, profile_name="", about=None, records=None):
     commands = os.path.join(profile_path, "bin")
     if os.path.isfile(os.path.join(commands, "startManager.sh")):
-        return "dmgr"
+        return {"type": "dmgr", "source": "startManager.sh"}
     if os.path.isfile(os.path.join(commands, "startNode.sh")):
-        return "managed"
+        return {"type": "managed", "source": "startNode.sh"}
     if os.path.isfile(os.path.join(commands, "startServer.sh")):
-        return "application_server"
-    return "unknown"
+        return {"type": "application_server", "source": "startServer.sh"}
+
+    if about is None:
+        about = parse_about_profile(
+            os.path.join(profile_path, "logs", "AboutThisProfile.txt")
+        )
+    declared = str(about.get("profile_type", "")).strip().lower()
+    if "deployment manager" in declared or declared == "dmgr":
+        return {"type": "dmgr", "source": "AboutThisProfile.txt"}
+    if "custom" in declared or "managed" in declared:
+        return {"type": "managed", "source": "AboutThisProfile.txt"}
+    if "application server" in declared or declared == "default":
+        return {"type": "application_server", "source": "AboutThisProfile.txt"}
+
+    if records is None:
+        records = configured_nodes(profile_path)
+    local_records = []
+    if about.get("cell") and about.get("node"):
+        local_records = [
+            item for item in records
+            if item["cell"] == about["cell"] and item["node"] == about["node"]
+        ]
+    elif len(records) == 1:
+        local_records = records
+    local_servers = [
+        server.lower()
+        for record in local_records
+        for server in record.get("servers", [])
+    ]
+    if "dmgr" in local_servers:
+        return {"type": "dmgr", "source": "profile_configuration"}
+    if "nodeagent" in local_servers:
+        return {"type": "managed", "source": "profile_configuration"}
+    if local_servers:
+        return {"type": "application_server", "source": "profile_configuration"}
+
+    looks_like_profile = bool(
+        about
+        or records
+        or os.path.isfile(os.path.join(commands, "setupCmdLine.sh"))
+        or os.path.isfile(
+            os.path.join(profile_path, "properties", "profileRegistry.xml")
+        )
+    )
+    if looks_like_profile:
+        return profile_name_hint(profile_name or os.path.basename(profile_path))
+    return {"type": "unknown", "source": "none"}
+
+
+def profile_type(profile_path, profile_name=""):
+    return profile_type_details(profile_path, profile_name)["type"]
 
 
 def configured_nodes(profile_path):
@@ -186,9 +266,10 @@ def path_owner(path):
 
 
 def inspect_profile(install_root, name, path):
-    kind = profile_type(path)
     about = parse_about_profile(os.path.join(path, "logs", "AboutThisProfile.txt"))
     records = configured_nodes(path)
+    identity = profile_type_details(path, name, about=about, records=records)
+    kind = identity["type"]
     local_node = select_local_node(records, kind, about)
     cell = about.get("cell", "")
     node = about.get("node", "")
@@ -207,6 +288,7 @@ def inspect_profile(install_root, name, path):
         "path": os.path.realpath(path),
         "install_root": os.path.realpath(install_root),
         "type": kind,
+        "type_source": identity["source"],
         "owner": path_owner(path),
         "cell": cell,
         "node": node,

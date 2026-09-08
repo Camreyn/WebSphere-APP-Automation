@@ -30,9 +30,19 @@ or wave variables per server. The operational playbook discovers them from the
 local profile files and live Dmgr. If WebSphere is outside the standard install
 roots, define one inventory-group variable named
 `was_maintenance_install_roots` containing the candidate root paths.
-Standard discovery includes conventional WAS roots plus versioned
+Standard discovery includes `/opt/WebSphere/AppServer`,
+`/opt/WebSphere/AppServers`, conventional IBM WAS roots, plus versioned
 `/opt/IBM/Workflow/*`, `/opt/ibm/Workflow/*`, `/opt/IBM/BPM/*`, and
 `/opt/ibm/BPM/*` installations.
+
+Profile names are not configuration inputs. Discovery enumerates the profile
+registry and every directory beneath each installation's `profiles` folder.
+Executable and configuration markers identify Dmgr and managed profiles first.
+If those markers are incomplete, common names such as `AppSrv01`,
+`AppServer02`, `Dmgr01`, or `dmgr` are recognized case-insensitively, followed
+by guarded `app*` and `dm*` name-prefix fallbacks. A prefix is accepted only
+when the directory also contains WebSphere profile metadata; live cell and
+cluster-member correlation must still succeed before reboot authorization.
 
 ## 2. Import the Project
 

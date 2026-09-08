@@ -184,13 +184,47 @@ def test_topology_discovery_reads_profiles_without_inventory_metadata(
     assert managed_result["node"] == "OrdersNode02"
     assert managed_result["servers"] == ["server2"]
     assert managed_result["owner"] == "wasprod"
+    assert managed_result["type_source"] == "startNode.sh"
     assert dmgr_result["type"] == "dmgr"
     assert dmgr_result["cell"] == "OrdersCell"
     assert dmgr_result["soap_port"] == 8891
+    assert dmgr_result["type_source"] == "startManager.sh"
     assert topology.parse_profile_names("[Dmgr01, AppSrv01]\n") == [
         "Dmgr01", "AppSrv01"
     ]
+    assert "/opt/WebSphere/AppServer" in topology.DEFAULT_INSTALL_ROOTS
     assert "/opt/ibm/Workflow/*" in topology.DEFAULT_INSTALL_ROOTS
+
+
+def test_topology_profile_name_fallbacks_are_case_insensitive_and_guarded() -> None:
+    topology = load_utility("_topology")
+    managed_names = (
+        "AppSrv1", "AppSrv01", "AppSrv02", "AppSrv2",
+        "AppServer01", "AppServer1", "AppServer02", "AppServer2",
+        "appsrv01", "appsrv1", "appserver01",
+    )
+    dmgr_names = ("Dmgr1", "Dmgr01", "dmgr", "dmgr1", "dmgr01")
+    for name in managed_names:
+        assert topology.profile_name_hint(name)["type"] == "managed"
+    for name in dmgr_names:
+        assert topology.profile_name_hint(name)["type"] == "dmgr"
+    assert topology.profile_name_hint("appPaymentsBlue")["type"] == "managed"
+    assert topology.profile_name_hint("dmPaymentsBlue")["type"] == "dmgr"
+
+    fallback_root = ROOT / "tests" / "fixtures" / "topology" / "fallback"
+    prefix_candidate = fallback_root / "appPaymentsBlue"
+    details = topology.profile_type_details(
+        str(prefix_candidate), prefix_candidate.name
+    )
+    assert details == {"type": "managed", "source": "profile_name_prefix"}
+
+    decoy = fallback_root / "app-backup-not-a-profile"
+    assert topology.profile_type(str(decoy), decoy.name) == "unknown"
+
+    script_evidence = fallback_root / "appNamedButActuallyDmgr"
+    assert topology.profile_type_details(
+        str(script_evidence), script_evidence.name
+    ) == {"type": "dmgr", "source": "startManager.sh"}
 
 
 def sample_discovered_wave_inputs() -> tuple[dict, dict]:

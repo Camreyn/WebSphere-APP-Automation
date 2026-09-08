@@ -480,6 +480,13 @@ them. The Dmgr host becomes Node 1/wave 2 automatically; the partner becomes
 Node 2/wave 1. It also records every currently running application instance so
 the same node/server placement must return after reboot.
 
+Local discovery checks singular and plural `/opt/WebSphere/AppServer(s)` roots,
+conventional IBM WAS roots, and versioned Workflow/BPM roots. It enumerates
+registered and on-disk profile names rather than assuming `Dmgr01` or
+`AppSrv01`. Profile scripts and configuration are authoritative; common names
+and guarded `app*`/`dm*` directory prefixes are used only as fallbacks when the
+directory contains WebSphere profile metadata.
+
 Discovery also reads `versionInfo.sh` and asks the profile-local wsadmin runtime
 for its Jython generation. It classifies plain WAS, legacy IBM BPM, and BAW
 without per-server version flags. The built-in bridge uses syntax shared by

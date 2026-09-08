@@ -14,6 +14,8 @@ description:
   - Finds registered or conventional WebSphere profiles on a managed host.
   - Identifies deployment-manager and managed-node profiles, their cell and
     node names, profile owner, local servers, and Dmgr SOAP connector port.
+  - Uses profile scripts and configuration first, followed by guarded common
+    name and app/dm directory-prefix fallbacks.
   - Performs read-only discovery and does not require per-host topology variables.
 options:
   install_roots:
@@ -21,6 +23,7 @@ options:
     type: list
     elements: path
     default:
+      - /opt/WebSphere/AppServer
       - /opt/WebSphere/AppServers
       - /opt/IBM/WebSphere/AppServer
       - /opt/ibm/WebSphere/AppServer
