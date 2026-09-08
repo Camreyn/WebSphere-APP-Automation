@@ -458,72 +458,45 @@ Node 2 host concurrently while the Dmgrs remain online, waits for all of them
 to finish their complete maintenance sequence, and only then runs every Node 1
 host concurrently. A failed Node 2 recovery blocks all Node 1 work.
 
-Assign the wave and direct, node-specific health endpoints in inventory. The
-endpoint must not pass through a load balancer that could answer from the
-partner node:
+Inventory contains only the hosts and their connection addresses:
 
 ```yaml
 was_nodes:
   hosts:
     app1_node1:
-      was_node_name: App1Node01
-      was_cluster_name: App1Cluster
-      was_server_name: server1
-      was_maintenance_wave: 2
-      was_maintenance_hosts_dmgr: true
-      was_maintenance_dmgr_host: app1_node1
-      was_maintenance_health_urls:
-        - https://app1-node1.example.test/app1/health
+      ansible_host: 10.20.1.11
     app1_node2:
-      was_node_name: App1Node02
-      was_cluster_name: App1Cluster
-      was_server_name: server1
-      was_maintenance_wave: 1
-      was_maintenance_dmgr_host: app1_node1
-      was_maintenance_health_urls:
-        - https://app1-node2.example.test/app1/health
+      ansible_host: 10.20.1.12
     app2_node1:
-      was_node_name: App2Node01
-      was_cluster_name: App2Cluster
-      was_server_name: server1
-      was_maintenance_wave: 2
-      was_maintenance_hosts_dmgr: true
-      was_maintenance_dmgr_host: app2_node1
-      was_maintenance_health_urls:
-        - https://app2-node1.example.test/app2/health
+      ansible_host: 10.20.2.11
     app2_node2:
-      was_node_name: App2Node02
-      was_cluster_name: App2Cluster
-      was_server_name: server1
-      was_maintenance_wave: 1
-      was_maintenance_dmgr_host: app2_node1
-      was_maintenance_health_urls:
-        - https://app2-node2.example.test/app2/health
+      ansible_host: 10.20.2.12
 ```
 
-For a host with multiple managed servers, set `was_maintenance_members` to a
-list of `cluster`, `node`, and `name` mappings and list every application health
-endpoint in `was_maintenance_health_urls`. Authorize the disruptive action only
-for the intended run:
+The playbook discovers registered profiles and their owners, then queries each
+Dmgr for its live cell, clusters, server members, and applications. It requires
+exactly two managed hosts per cell and exactly one Dmgr co-located on one of
+them. The Dmgr host becomes Node 1/wave 2 automatically; the partner becomes
+Node 2/wave 1. It also records every currently running application instance so
+the same node/server placement must return after reboot.
+
+Authorize the disruptive action only for the intended run:
 
 ```bash
 ansible-playbook playbooks/was_wave_reboot.yml \
   -e was_maintenance_allow_reboot=true
 ```
 
-The role stops each managed server, stops the node agent, uses Ansible's reboot
-operation (which waits for the connection to return), starts the node agent and
-managed servers, and verifies all direct health endpoints. On a host with
-`was_maintenance_hosts_dmgr: true`, it stops Dmgr after the managed runtime,
-starts Dmgr before the node agent, and waits for the Dmgr SOAP port before using
-wsadmin. Preflight rejects a co-located Dmgr in wave 1 and, by default, requires
-every wave-2 host to declare `was_maintenance_hosts_dmgr: true`. Set
-`was_maintenance_require_dmgr_on_wave_2: false` only for a topology with a
-separate Dmgr host. Configure the controller's Ansible fork count to at least
-the number of hosts in the larger wave if every host must run simultaneously.
+The role stops each discovered managed server, stops the node agent, reboots,
+starts the runtime, and verifies member state plus each pre-maintenance
+application runtime. On Node 1 it stops Dmgr last, starts it first, and waits for
+SOAP before using wsadmin. Optional direct URLs in
+`was_maintenance_health_urls` add an HTTP gate; they are not required for the
+default WebSphere runtime-health policy. Configure AAP Forks to at least the
+number of hosts in the larger wave. Preflight fails before shutdown when the
+topology is ambiguous, a member is down, or the fork count is insufficient.
 Integrate load-balancer drain and return-to-service controls around the role
-when the production load balancer does not remove a stopped member
-automatically.
+when the production load balancer does not remove a stopped member automatically.
 
 ### Collect profile logs
 
@@ -698,7 +671,7 @@ was_node_systemd_service_name: was-nodeagent-appsrv01
 | `waslab.wasnd.managed_node` | Each application host | Create managed profile, federate it, start node agent | `was_node_profile_name`, `was_node_name`, `was_dmgr_host`, credentials |
 | `waslab.wasnd.cell` | Dmgr host | Create declared clusters/members and synchronize changed nodes | `was_clusters`, `was_sync_after_cell_change` |
 | `waslab.wasnd.rolling_restart` | Dmgr host | Restart members sequentially with optional HTTP health gate | `was_cluster_members`, `was_rolling_health_url`, retry settings |
-| `waslab.wasnd.wave_reboot` | Each managed-node host | Stop, reboot, recover, and directly health-check one host; optionally recover a co-located Dmgr first | `was_maintenance_wave`, `was_maintenance_hosts_dmgr`, `was_maintenance_members`, `was_maintenance_health_urls`, reboot authorization/timeouts |
+| `waslab.wasnd.wave_reboot` | Each planned managed-node host | Stop, reboot, and restore discovered members and pre-maintenance application runtimes; recover a co-located Dmgr first | Variables generated by `was_wave_reboot.yml`, optional HTTP URLs, authorization/timeouts |
 | `waslab.wasnd.collect_logs` | Any WAS host | Archive and fetch profile logs | `was_profile_name`, `was_log_destination`, `was_log_archive_path` |
 
 The install role manages packages by default and recursively assigns the WAS
@@ -715,6 +688,8 @@ or filesystem permissions.
 | `federation` | Managed-node host | Add or remove a profile from the Dmgr cell | Yes | Yes |
 | `soap_credentials` | Profile host | Persist or restore IBM-encoded SOAP properties | Yes | No |
 | `cell_info` | Dmgr or Base host | Return structured product and topology state | Yes | N/A |
+| `topology_info` | Managed-node host | Discover local profiles, identities, owners, cell/node names, and Dmgr SOAP port | Yes | N/A |
+| `wave_plan` | Controller | Correlate host profile facts with live Dmgr state and calculate safe Node 2/Node 1 waves | Yes | N/A |
 | `cluster` | Dmgr host | Create/start/stop/delete a cluster | Yes | Yes |
 | `cluster_member` | Dmgr host | Create/start/stop/restart/delete a member | Yes | Yes |
 | `application` | Dmgr or Base host | Checksum-install/update/start/stop/delete WAR/EAR content | Yes | Yes |
@@ -728,7 +703,7 @@ or filesystem permissions.
 | `release_lock` | Any managed host | Atomically serialize releases per application | Yes | Explicit release |
 | `release_record` | Any managed host | Persist the current and prior known-good immutable release | Yes | N/A |
 | `smtp_report` | Controller or managed host | Send plain/HTML status reports and attachments through SMTP | Yes | N/A |
-| `aap_template_setup` | AAP execution environment | Reconcile this Project's operational templates, credentials, and surveys through the controller API | Yes | N/A |
+| `aap_template_setup` | AAP execution environment | Reconcile this Project's operational templates, credential-launch policy, forks, and surveys through the controller API | Yes | N/A |
 
 Use `ansible-doc waslab.wasnd.<module>` for every option and return value.
 
@@ -805,11 +780,12 @@ For AWX or Ansible Automation Platform:
    concurrently. Federate new nodes serially.
 
 When this repository itself is the AAP Project, create one manual setup job
-template whose playbook is the root `setup.yml`. Attach the AAP controller,
-Machine, and protected WebSphere credentials, then launch it to create or
-update the repository-managed operational templates and surveys. The setup job
-inherits its own Project, Inventory, and Execution Environment, and copies only
-the non-controller credentials. See the repository-level
+template whose playbook is the root `setup.yml`. Attach only the AAP controller
+credential, then launch it to create or update the repository-managed
+operational template and survey. The setup job contributes its Project,
+Inventory, and Execution Environment. The generated job prompts natively for
+the Machine and protected WebSphere credentials at each launch. See the
+repository-level
 [`AAP_SELF_SETUP.md`](../../../../../../docs/AAP_SELF_SETUP.md) runbook for the
 exact settings.
 

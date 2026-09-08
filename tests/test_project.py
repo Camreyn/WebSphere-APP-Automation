@@ -146,7 +146,7 @@ def test_wasnd_collection_has_expected_public_surface() -> None:
         "profile_runtime", "cluster_member", "application", "jvm_heap", "node_sync", "cell_info", "wsadmin",
         "application_info", "application_export", "log_delta",
         "release_artifact", "release_lock", "release_record", "smtp_report",
-        "aap_template_setup",
+        "aap_template_setup", "topology_info", "wave_plan",
     }.issubset(modules)
     roles = {path.name for path in (collection / "roles").iterdir() if path.is_dir()}
     assert {
@@ -227,17 +227,28 @@ def test_wave_reboot_runs_node_pairs_in_parallel_with_a_hard_wave_gate() -> None
     )
     plays = list(playbook)[0]
     assert [play["hosts"] for play in plays] == [
-        "localhost", "was_maintenance_wave_1", "was_maintenance_wave_2"
+        "localhost",
+        "{{ maintenance_inventory_group | default('was_nodes') }}",
+        "was_discovered_dmgrs",
+        "localhost",
+        "was_maintenance_wave_1",
+        "localhost",
+        "was_maintenance_wave_2",
+        "localhost",
     ]
-    assert plays[1]["strategy"] == "free"
-    assert plays[2]["strategy"] == "free"
-    assert "Node 2" in plays[1]["name"]
-    assert "Node 1" in plays[2]["name"]
-    gate = str(plays[2]["pre_tasks"])
+    assert plays[4]["strategy"] == "free"
+    assert plays[6]["strategy"] == "free"
+    assert "Node 2" in plays[4]["name"]
+    assert "Node 1" in plays[6]["name"]
+    gate = str(plays[5]["tasks"])
     assert "was_maintenance_host_recovered" in gate
-    preflight = str(plays[0]["tasks"])
-    assert "was_maintenance_require_dmgr_on_wave_2" in preflight
-    assert "was_maintenance_hosts_dmgr" in preflight
+    preflight = str(plays[:4])
+    assert "waslab.wasnd.topology_info" in preflight
+    assert "waslab.wasnd.cell_info" in preflight
+    assert "waslab.wasnd.application_info" in preflight
+    assert "waslab.wasnd.wave_plan" in preflight
+    assert "ansible_forks" in preflight
+    assert "was_maintenance_wave" not in str(plays[0:3])
 
     role_tasks = yaml.safe_load(
         (
@@ -250,6 +261,8 @@ def test_wave_reboot_runs_node_pairs_in_parallel_with_a_hard_wave_gate() -> None
     assert "was_maintenance_allow_reboot" in combined
     assert "ansible.builtin.reboot" in combined
     assert "was_maintenance_health_urls" in combined
+    assert "was_maintenance_expected_applications" in combined
+    assert "waslab.wasnd.application_info" in combined
     assert task_names.index("Stop the co-located deployment manager last") < task_names.index(
         "Reboot the operating system and wait for its Ansible connection"
     )
@@ -263,15 +276,7 @@ def test_wave_reboot_runs_node_pairs_in_parallel_with_a_hard_wave_gate() -> None
         "Wait for the recovered deployment-manager SOAP connector"
     ) < task_names.index("Start the node agent after reboot")
 
-    inventory = yaml.safe_load(
-        (ROOT / "ansible" / "inventory" / "lab.yml").read_text(encoding="utf-8")
-    )
-    hosts = inventory["all"]["children"]["was_nodes"]["hosts"]
-    assert hosts["was-node2"]["was_maintenance_wave"] == 1
-    assert hosts["was-node1"]["was_maintenance_wave"] == 2
-
-
-def test_in_aap_setup_configures_templates_credentials_and_shared_surveys() -> None:
+def test_in_aap_setup_configures_prompted_credentials_and_shared_surveys() -> None:
     config_path = ROOT / "config" / "aap" / "controller_setup.yml"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     wave_templates = [
@@ -281,6 +286,10 @@ def test_in_aap_setup_configures_templates_credentials_and_shared_surveys() -> N
     assert len(wave_templates) == 1
     wave_template = wave_templates[0]
     assert wave_template["name"] == "WAS - Reboot Nodes by Wave"
+    assert config["credential_mode"] == "prompt"
+    assert wave_template["ask_credential_on_launch"] is True
+    assert wave_template["ask_forks_on_launch"] is True
+    assert wave_template["forks"] == 0
     assert (ROOT / wave_template["playbook"]).is_file()
     assert (ROOT / "ansible" / wave_template["local_lab_playbook"]).is_file()
     survey_variables = {
@@ -289,10 +298,10 @@ def test_in_aap_setup_configures_templates_credentials_and_shared_surveys() -> N
     assert {
         "was_maintenance_allow_reboot",
         "maintenance_inventory_group",
-        "was_maintenance_require_health_checks",
         "was_maintenance_reboot_timeout",
         "was_maintenance_dmgr_start_timeout",
     }.issubset(survey_variables)
+    assert "was_maintenance_require_health_checks" not in survey_variables
     authorization = next(
         question
         for question in wave_template["survey"]["spec"]

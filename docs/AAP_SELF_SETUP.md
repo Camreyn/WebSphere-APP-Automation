@@ -1,89 +1,151 @@
 # Configure AAP from inside AAP
 
-This repository is self-configuring. Import it as an AAP Project, create one
-small setup job template that runs `setup.yml`, and launch that template. The
-playbook uses the AAP API from inside the job to create or update the
-repository-managed operational job templates and their surveys.
+Import this repository as an AAP Project, create one small job template that
+runs `setup.yml`, and launch it. That playbook calls AAP's own controller API
+from inside AAP and idempotently creates or updates the operational template
+and survey. No GitHub Action or external runner is involved.
 
-No GitHub Actions workflow or external runner is involved. Network traffic is
-limited to the connections AAP already needs: project synchronization from
-GitHub and the setup job's connection back to its own AAP API.
+## 1. Create the production inventory
 
-## 1. Import the project
+Create an inventory with a `was_nodes` group. For the reboot workflow, maintain
+only the inventory host identity and connection address:
 
-In Automation Controller, create or update a Project with these settings:
+```yaml
+all:
+  children:
+    was_nodes:
+      hosts:
+        app1_node1:
+          ansible_host: 10.20.1.11
+        app1_node2:
+          ansible_host: 10.20.1.12
+        app2_node1:
+          ansible_host: 10.20.2.11
+        app2_node2:
+          ansible_host: 10.20.2.12
+```
+
+Do not maintain cell, cluster, node, member, profile, Dmgr, SOAP-port, health,
+or wave variables per server. The operational playbook discovers them from the
+local profile files and live Dmgr. If WebSphere is outside the standard install
+roots, define one inventory-group variable named
+`was_maintenance_install_roots` containing the candidate root paths.
+
+## 2. Import the Project
+
+Create or update an Automation Controller Project:
 
 - **Source control type:** Git
-- **Source control URL:** the URL of this repository in your GitHub installation
+- **Source control URL:** this repository in your GitHub installation
 - **Source control branch:** the branch to operate from, normally `main`
-- **Update revision on launch:** enabled if every setup run should use the
-  latest committed definition
+- **Update revision on launch:** enabled when setup should use the newest commit
 
-Sync the Project and confirm that `setup.yml` is offered as a playbook.
+Sync the Project and confirm that the root `setup.yml` is offered as a playbook.
 
-## 2. Create the controller credential
+## 3. Create the setup credential
 
-Create a credential using the built-in **Red Hat Ansible Automation Platform**
-credential type. Point it at the same AAP instance and use an OAuth token whose
-user can read the setup template and create or update job templates, surveys,
-and credential associations in the template's organization.
+Create a credential using AAP's built-in **Red Hat Ansible Automation Platform**
+credential type. Point it at this AAP instance and use an OAuth token whose user
+can read the setup template and create or update job templates and surveys in
+the organization.
 
-Keep TLS certificate verification enabled when AAP uses a trusted certificate.
-If the instance uses an internal certificate authority, add that CA to the
-execution environment instead of disabling verification for production.
+Keep TLS verification enabled with a trusted certificate. For an internal CA,
+install that CA in the execution environment instead of disabling validation.
 
-## 3. Create the one manual setup template
+## 4. Create the one manual setup template
 
-Create a job template such as **WAS - Setup Automation** with:
+Create **WAS - Setup Automation** with:
 
 | Setting | Value |
 | --- | --- |
-| Inventory | The inventory containing all production WebSphere hosts |
-| Project | The imported GitHub Project |
+| Inventory | The production inventory from step 1 |
+| Project | The imported Git Project |
 | Playbook | `setup.yml` |
-| Execution Environment | The environment intended for the generated jobs |
-| Credentials | AAP controller credential, Machine credential, WebSphere credential |
+| Execution Environment | The EE intended for the operational job |
+| Credentials | Only the AAP controller credential from step 3 |
 
-Attach any additional operational credential that every generated job should
-inherit. The setup playbook requires at least two non-controller credentials,
-including the **Machine** and **WebSphere Administrative Credential** types.
-If your custom WebSphere credential type has a different name, update
-`required_copied_credential_types` in `config/aap/controller_setup.yml`.
+The inventory is selected here so the generated template can inherit it.
+`setup.yml` itself runs on localhost and does not SSH to the WebSphere hosts.
+It does not need the Machine or WebSphere credentials.
 
-The generated templates inherit this setup template's Project, Inventory,
-Execution Environment, and non-controller credentials. The controller API
-credential is setup-only: the playbook deliberately does not attach it to the
-operational templates, and removes it there if it was attached previously.
-Credential associations are reconciled exactly, so replace or remove an
-operational credential on the setup template before rerunning setup rather than
-editing the generated templates directly.
+## 5. Launch setup
 
-## 4. Launch setup
+Launch **WAS - Setup Automation**. It creates or updates **WAS - Reboot Nodes
+by Wave**, its survey, native credential prompt, and native Forks prompt.
 
-Launch **WAS - Setup Automation**. A successful run reports the discovered API
-route, inherited context, copied credentials, and whether each managed template
-was created, updated, or already current.
+Rerun setup after syncing repository changes. Existing managed fields and the
+survey are updated in place. Operational credentials are deliberately not
+copied from the setup template and stale credential associations are removed.
 
-The desired objects are declared in
-`config/aap/controller_setup.yml`. The first setup run currently creates:
+## 6. Create the two operational credentials
 
-- **WAS - Reboot Nodes by Wave**, using
-  `ansible/playbooks/was_wave_reboot.yml`
-- its launch survey, including explicit reboot authorization and recovery
-  timeouts
+Create a normal **Machine** credential that can connect to every inventory host,
+use privilege escalation, and reboot it.
 
-Run the setup template again after changing and syncing the repository. Existing
-objects are patched only when their managed fields, credential associations, or
-survey differ, so reruns are safe and idempotent.
+Create a protected WebSphere custom credential that injects exactly these extra
+variables:
 
-## Production notes
+```yaml
+was_admin_user: "{{ username }}"
+was_admin_password: "{{ password }}"
+```
 
-- Restrict launch access to the setup template because its credential can
-  change controller configuration.
-- Scope the OAuth user to the smallest organization-level permissions that can
-  manage the required templates and credential associations.
-- Do not add the AAP controller credential to the generated reboot template.
-- Use `controller_api_prefix` as an extra variable only if automatic discovery
-  cannot choose between `/api/controller/v2` and `/api/v2` in your installation.
-- AAP check mode previews template changes without issuing create, patch,
-  association, or survey-update requests.
+The custom credential type should mark `password` secret. These credentials are
+selected in AAP's native **Credentials** launch step; passwords are not survey
+answers and are not stored in inventory or Git.
+
+## 7. Launch the operational template
+
+Launch **WAS - Reboot Nodes by Wave** and supply:
+
+1. **Credentials:** select the Machine credential and WebSphere credential.
+2. **Survey:** leave `was_nodes` unless using another host group, set the two
+   timeouts, and set reboot authorization to `true` only for an approved run.
+3. **Forks:** enter at least the number of application pairs. For five pairs,
+   enter at least `5`, so all five Node 2 hosts can run together and then all
+   five Node 1 hosts can run together.
+
+Leaving authorization at its default `false` performs complete read-only
+discovery, prints the proposed pairs and waves, and stops before any shutdown.
+
+## What the job discovers and enforces
+
+Before changing a host, the job:
+
+- finds the registered Dmgr and managed-node profiles, install roots, profile
+  names, owning OS users, cells, nodes, local servers, and Dmgr SOAP ports;
+- queries every Dmgr for live clusters, members, member states, applications,
+  and application runtime placement;
+- requires exactly two managed hosts per cell and exactly one co-located Dmgr;
+- defines the Dmgr host as Node 1/wave 2 and its partner as Node 2/wave 1;
+- rejects stopped members, missing hosts, ambiguous profiles, incomplete pairs,
+  or too few Ansible forks before the first disruptive task.
+
+Wave 1 stops and reboots all Node 2 hosts concurrently. Each must reconnect,
+restart its node agent and members, and restore every application runtime that
+was present before maintenance. Only then can wave 2 start. On every Node 1
+host, the job stops the co-located Dmgr last and starts it first before
+recovering that node's members and applications.
+
+The default health gate is live WebSphere member state plus restoration of each
+pre-maintenance application runtime instance. Optional direct HTTP checks can
+still be supplied as group/host variables in `was_maintenance_health_urls`; set
+`was_maintenance_require_health_checks: true` only when those URLs are required.
+
+## Supported topology and safety boundary
+
+Automatic pairing intentionally fails closed unless each selected cell has:
+
+- exactly two inventory hosts with one managed profile on each;
+- exactly one Dmgr profile, co-located with the host designated Node 1;
+- clustered managed servers visible and started in the live Dmgr;
+- profile paths readable under privilege escalation.
+
+If a cell uses a separate Dmgr host, more than two managed nodes, multiple
+managed profiles per OS host, or another layout, do not use this two-wave job
+without extending its discovery policy for that topology.
+
+Restrict launch access to the setup template because its AAP credential can
+change controller configuration. `controller_api_prefix` can be supplied as an
+extra variable only if automatic discovery cannot choose between
+`/api/controller/v2` and `/api/v2`.

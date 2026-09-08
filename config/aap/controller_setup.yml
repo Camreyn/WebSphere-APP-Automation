@@ -1,40 +1,38 @@
 ---
 version: 1
 
-# The setup template carries three credentials: the AAP credential used to
-# configure the controller, plus the Machine and WebSphere credentials needed
-# by generated operational templates. Controller credentials are deliberately
-# removed from generated templates.
-excluded_credential_types:
-  - Red Hat Ansible Automation Platform
-  - Ansible Tower
-minimum_copied_credentials: 2
-required_copied_credential_types:
-  - Machine
-  - WebSphere Administrative Credential
+# Keep the controller API credential on the one setup template. Generated
+# operational templates prompt for their Machine and WebSphere credentials at
+# launch through AAP's native credential step.
+credential_mode: prompt
 
 templates:
   - key: wave_reboot
     name: WAS - Reboot Nodes by Wave
     description: >-
-      Reboot every Node 2 application host concurrently, require complete
-      recovery, then reboot Node 1 hosts and their co-located deployment managers.
+      Discover each two-host WebSphere cell, reboot every non-Dmgr (Node 2)
+      host concurrently, require complete runtime recovery, then reboot every
+      Dmgr (Node 1) host concurrently.
     playbook: ansible/playbooks/was_wave_reboot.yml
     local_lab_playbook: playbooks/was_wave_reboot.yml
     job_type: run
     verbosity: 1
     allow_simultaneous: false
     ask_variables_on_launch: false
+    ask_credential_on_launch: true
+    ask_forks_on_launch: true
+    forks: 0
     survey:
       name: Reboot WebSphere application pairs by wave
       description: >-
-        Host-specific members, Dmgr placement, and direct health URLs come from
-        inventory. This survey authorizes and bounds one maintenance run.
+        The job discovers cells, nodes, cluster members, co-located Dmgrs,
+        waves, and pre-maintenance application runtime state. The survey only
+        authorizes and bounds this maintenance run.
       spec:
         - question_name: Authorize operating-system reboots
           question_description: >-
-            Must be enabled for the job to pass preflight. Node 2 runs first;
-            Node 1 and its co-located deployment manager run second.
+            Must be enabled for the job to pass preflight. All Node 2 hosts run
+            first; Node 1 hosts and their co-located Dmgrs run second.
           required: true
           type: multiplechoice
           variable: was_maintenance_allow_reboot
@@ -47,28 +45,14 @@ templates:
           new_question: true
         - question_name: Maintenance inventory group
           question_description: >-
-            Inventory group containing every Node 1/Node 2 application host in
-            this run. Each host must declare was_maintenance_wave.
+            Inventory group containing the hostnames/IPs for every two-host
+            WebSphere cell included in this run.
           required: true
           type: text
           variable: maintenance_inventory_group
           min: 1
           max: 128
           default: was_nodes
-          new_question: true
-        - question_name: Require direct application health checks
-          question_description: >-
-            Keep enabled in production. Each host supplies its own direct URLs in
-            was_maintenance_health_urls.
-          required: true
-          type: multiplechoice
-          variable: was_maintenance_require_health_checks
-          choices: |-
-            true
-            false
-          default: "true"
-          min: null
-          max: null
           new_question: true
         - question_name: Operating-system reboot timeout (seconds)
           question_description: Maximum time Ansible waits for each host to reboot and reconnect.
@@ -82,7 +66,7 @@ templates:
         - question_name: Deployment-manager startup timeout (seconds)
           question_description: >-
             Maximum time allowed to start a co-located Dmgr and restore its SOAP
-            connector before the Node 1 applications are started.
+            connector before Node 1 applications are started.
           required: true
           type: integer
           variable: was_maintenance_dmgr_start_timeout

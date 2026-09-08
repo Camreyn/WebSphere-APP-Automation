@@ -1,0 +1,7 @@
+<serverindex:ServerIndex xmlns:serverindex="urn:test" hostName="node1">
+  <serverEntries>
+    <specialEndpoints endPointName="SOAP_CONNECTOR_ADDRESS">
+      <endPoint port="8891"/>
+    </specialEndpoints>
+  </serverEntries>
+</serverindex:ServerIndex>

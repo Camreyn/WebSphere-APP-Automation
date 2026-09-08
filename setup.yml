@@ -63,6 +63,7 @@
         msg:
           api_prefix: "{{ aap_setup_result.api_prefix }}"
           inherited_context: "{{ aap_setup_result.context }}"
+          operational_credential_mode: "{{ aap_setup_result.credential_mode }}"
           copied_operational_credentials: "{{ aap_setup_result.copied_credentials }}"
           setup_only_credentials: "{{ aap_setup_result.excluded_credentials }}"
           templates: "{{ aap_setup_result.templates }}"

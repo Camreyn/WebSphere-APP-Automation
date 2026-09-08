@@ -8,20 +8,21 @@
     that:
       - was_maintenance_allow_reboot | bool
       - was_maintenance_dmgr_host | length > 0
-      - >-
-        (was_maintenance_members | length > 0) or
-        (
-          was_cluster_name is defined and
-          was_node_name is defined and
-          was_server_name is defined
-        )
+      - was_maintenance_members | length > 0
+      - was_install_root | length > 0
+      - was_maintenance_node_profile_name | length > 0
+      - was_maintenance_node_os_user | length > 0
+      - was_maintenance_dmgr_install_root | length > 0
+      - was_maintenance_dmgr_profile_name | length > 0
+      - was_maintenance_dmgr_os_user | length > 0
+      - was_maintenance_dmgr_soap_port | int > 0
       - >-
         (not (was_maintenance_require_health_checks | bool)) or
         (was_maintenance_health_urls | length > 0)
     fail_msg: >-
-      Wave reboot requires explicit authorization, a Dmgr target, WebSphere
-      member identity, and at least one direct health URL unless health checks
-      were explicitly disabled.
+      Wave reboot requires explicit authorization and the complete topology
+      produced by automatic preflight. Optional direct HTTP checks are required
+      only when was_maintenance_require_health_checks is enabled.
 
 - name: Require the injected WebSphere administrative credential
   ansible.builtin.assert:
@@ -33,18 +34,7 @@
 
 - name: Build the managed-server list for this host
   ansible.builtin.set_fact:
-    was_maintenance_effective_members: >-
-      {{
-        was_maintenance_members
-        if (was_maintenance_members | length > 0)
-        else [
-          {
-            'cluster': was_cluster_name,
-            'node': was_node_name,
-            'name': was_server_name
-          }
-        ]
-      }}
+    was_maintenance_effective_members: "{{ was_maintenance_members }}"
 
 - name: Validate every managed-server identity before stopping anything
   ansible.builtin.assert:
@@ -59,6 +49,17 @@
   loop: "{{ was_maintenance_effective_members }}"
   loop_control:
     loop_var: was_maintenance_member
+
+- name: Validate every expected application runtime identity
+  ansible.builtin.assert:
+    that:
+      - was_maintenance_expected_application.name | default('') | length > 0
+      - was_maintenance_expected_application.node | default('') | length > 0
+      - was_maintenance_expected_application.server | default('') | length > 0
+    fail_msg: Each expected application requires name, node, and server.
+  loop: "{{ was_maintenance_expected_applications }}"
+  loop_control:
+    loop_var: was_maintenance_expected_application
 
 - name: Validate every direct application health check before stopping anything
   ansible.builtin.assert:
@@ -193,6 +194,40 @@
     label: >-
       {{ was_maintenance_member.cluster }}/{{ was_maintenance_member.node }}/{{
       was_maintenance_member.name | default(was_maintenance_member.server | default('server1')) }}
+
+- name: Verify every pre-maintenance application runtime returned
+  waslab.wasnd.application_info:
+    install_root: "{{ was_maintenance_dmgr_install_root }}"
+    profile_name: "{{ was_maintenance_dmgr_profile_name }}"
+    host: "{{ was_maintenance_dmgr_soap_host }}"
+    port: "{{ was_maintenance_dmgr_soap_port }}"
+    username: "{{ was_admin_user }}"
+    password: "{{ was_admin_password }}"
+    name: "{{ was_maintenance_expected_application.name }}"
+  delegate_to: "{{ was_maintenance_dmgr_host }}"
+  become: true
+  become_user: "{{ was_maintenance_dmgr_os_user }}"
+  register: was_maintenance_application_runtime
+  retries: "{{ was_maintenance_application_retries }}"
+  delay: "{{ was_maintenance_application_delay }}"
+  until: >-
+    (was_maintenance_application_runtime is succeeded) and
+    (was_maintenance_application_runtime.get('application', {}).get('installed', false) | bool) and
+    (
+      was_maintenance_application_runtime.get('application', {}).get('runtime_instances', [])
+      | selectattr('node', 'defined')
+      | selectattr('node', 'equalto', was_maintenance_expected_application.node)
+      | selectattr('process', 'defined')
+      | selectattr('process', 'equalto', was_maintenance_expected_application.server)
+      | list | length > 0
+    )
+  loop: "{{ was_maintenance_expected_applications }}"
+  loop_control:
+    loop_var: was_maintenance_expected_application
+    label: >-
+      {{ was_maintenance_expected_application.name }}/{{
+      was_maintenance_expected_application.node }}/{{
+      was_maintenance_expected_application.server }}
 
 - name: Verify every application endpoint directly on the recovered host
   ansible.builtin.uri:

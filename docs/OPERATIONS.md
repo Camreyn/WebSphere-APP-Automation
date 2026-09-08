@@ -143,21 +143,21 @@ The scripts use IBM `AdminConfig`, `AdminControl`, `AdminTask`, and `AdminApp`
 objects through Jython. They do not simulate a WAS API.
 
 `WAS - Reboot Nodes by Wave` is guarded by
-`was_maintenance_allow_reboot: true`. Each inventory host must declare wave 1
-or 2 plus direct application health URLs. Node 2 is wave 1, so each Node 1 Dmgr
-remains available while its partner reboots. Node 1 is wave 2 and sets
-`was_maintenance_hosts_dmgr: true`; the role stops Dmgr last, starts it first,
-and waits for SOAP before recovering WebSphere. Wave 2 is blocked unless every
-wave-1 host stopped, rebooted, restarted, and passed health checks. The Docker
-lab records the wave metadata for illustration but intentionally has no direct
-reboot-health configuration, because its containers are not production
-operating-system reboot targets.
+`was_maintenance_allow_reboot: true`. Production inventory only needs each
+hostname and connection address in `was_nodes`. Read-only preflight discovers
+profiles, owners, cells, nodes, cluster members, applications, Dmgr placement,
+SOAP ports, and both waves. The Dmgr host is Node 1/wave 2; its partner is Node
+2/wave 1. The role stops Dmgr last, starts it first, and waits for SOAP before
+recovering WebSphere. Wave 2 is blocked unless every wave-1 host reconnects and
+restores all pre-maintenance member and application runtimes. Direct HTTP
+health URLs are optional. The Docker lab inventory is illustrative and is not a
+production operating-system reboot target.
 
 The local lab bootstrap and the in-AAP `setup.yml` playbook both read the shared
 template and survey definition from `config/aap/controller_setup.yml`. See
 [`AAP_SELF_SETUP.md`](AAP_SELF_SETUP.md) for the one-time setup job template,
 controller credential, inherited inventory, project, execution environment, and
-operational credential settings.
+native operational credential/fork prompts.
 
 ## Daily commands
 

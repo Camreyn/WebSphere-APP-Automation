@@ -221,6 +221,11 @@ def template_payload(template, context):
         "ask_variables_on_launch": bool(
             template.get("ask_variables_on_launch", False)
         ),
+        "ask_credential_on_launch": bool(
+            template.get("ask_credential_on_launch", False)
+        ),
+        "ask_forks_on_launch": bool(template.get("ask_forks_on_launch", False)),
+        "forks": int(template.get("forks", 0)),
         "survey_enabled": bool(template.get("survey")),
     }
     if "extra_vars" in template:
@@ -277,6 +282,9 @@ def configure_controller_templates(api, setup_template, definition, check_mode=F
             "Controller setup contains duplicate template names: %s"
             % ", ".join(duplicate_names)
         )
+    credential_mode = definition.get("credential_mode", "inherit")
+    if credential_mode not in ("inherit", "prompt"):
+        raise ControllerError("credential_mode must be inherit or prompt")
     exclusions_value = definition.get("excluded_credential_types", [])
     required_types_value = definition.get("required_copied_credential_types", [])
     if not isinstance(exclusions_value, list) or not isinstance(
@@ -296,26 +304,32 @@ def configure_controller_templates(api, setup_template, definition, check_mode=F
     copied_credentials = []
     copied_credential_types = []
     excluded_credentials = []
-    for credential in setup_credentials:
-        type_name = credential_type_name(api, credential, type_cache)
-        if type_name in exclusions:
-            excluded_credentials.append(credential)
-        else:
-            copied_credentials.append(credential)
-            copied_credential_types.append(type_name)
-    if len(copied_credentials) < minimum_credentials:
-        raise ControllerError(
-            "The setup template has %s operational credential(s); at least %s are required"
-            % (len(copied_credentials), minimum_credentials)
+    if credential_mode == "prompt":
+        # The setup credential is privileged controller API access. Keep every
+        # setup credential off operational templates and let AAP's native
+        # credential launch step collect Machine/WebSphere credentials instead.
+        excluded_credentials = list(setup_credentials)
+    else:
+        for credential in setup_credentials:
+            type_name = credential_type_name(api, credential, type_cache)
+            if type_name in exclusions:
+                excluded_credentials.append(credential)
+            else:
+                copied_credentials.append(credential)
+                copied_credential_types.append(type_name)
+        if len(copied_credentials) < minimum_credentials:
+            raise ControllerError(
+                "The setup template has %s operational credential(s); at least %s are required"
+                % (len(copied_credentials), minimum_credentials)
+            )
+        missing_credential_types = sorted(
+            required_credential_types - set(copied_credential_types)
         )
-    missing_credential_types = sorted(
-        required_credential_types - set(copied_credential_types)
-    )
-    if missing_credential_types:
-        raise ControllerError(
-            "The setup template is missing required operational credential types: %s"
-            % ", ".join(missing_credential_types)
-        )
+        if missing_credential_types:
+            raise ControllerError(
+                "The setup template is missing required operational credential types: %s"
+                % ", ".join(missing_credential_types)
+            )
 
     context = {
         "organization": organization_id,
@@ -431,6 +445,7 @@ def configure_controller_templates(api, setup_template, definition, check_mode=F
     return {
         "changed": overall_changed,
         "api_prefix": api.api_prefix,
+        "credential_mode": credential_mode,
         "context": context,
         "copied_credentials": [item["name"] for item in copied_credentials],
         "copied_credential_types": copied_credential_types,
