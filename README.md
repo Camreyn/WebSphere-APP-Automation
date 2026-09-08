@@ -116,9 +116,11 @@ node synchronization, cell inspection, and local Jython scripts. It also
 contains install, deployment-manager, managed-node, cell, rolling-restart,
 two-wave operating-system reboot, and log-collection roles. The wave reboot
 runs every Node 2 application host concurrently before Node 1, keeping the
-co-located Node 1 Dmgr available for the first wave. It requires explicit
-reboot authorization plus direct per-host health checks. Destructive states
-require `allow_destructive: true`.
+co-located Node 1 Dmgr available for the first wave. It discovers pairs,
+profiles, cells, cluster members, applications, Dmgr placement, health state,
+and waves from a host-only inventory. It requires explicit reboot authorization
+and restores every pre-maintenance WebSphere runtime; direct HTTP checks remain
+optional. Destructive states require `allow_destructive: true`.
 
 ```powershell
 .\lab.ps1 collection-test
@@ -155,8 +157,8 @@ controls.
 
 The [in-AAP setup guide](docs/AAP_SELF_SETUP.md) describes the one manual
 `setup.yml` job template. Launching it from the imported project idempotently
-creates or updates the operational templates, credential associations, and
-surveys through AAP's own API; no GitHub runner is required.
+creates or updates the operational template, survey, and native credential and
+fork prompts through AAP's own API; no GitHub runner is required.
 
 See [operations](docs/OPERATIONS.md), [fidelity](docs/FIDELITY.md), and
 [licensing](docs/LICENSING.md) for the operating and security boundaries.

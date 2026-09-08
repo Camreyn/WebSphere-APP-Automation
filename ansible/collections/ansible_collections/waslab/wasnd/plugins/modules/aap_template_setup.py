@@ -11,11 +11,12 @@ module: aap_template_setup
 short_description: Configure this project's operational AAP job templates
 version_added: "0.1.0"
 description:
-  - Reads the Project, Inventory, Execution Environment, and credentials from
-    the job template that launched the current setup playbook.
+  - Reads the Project, Inventory, and Execution Environment from the job
+    template that launched the current setup playbook.
   - Idempotently creates or updates job templates, credential associations,
     and surveys from a repository-owned definition.
-  - Excludes the AAP controller credential from generated operational jobs.
+  - Can keep setup credentials off generated jobs and enable AAP's native
+    credential prompt for operational launches.
 options:
   controller_host:
     description: Base URL of the AAP controller or platform gateway.
@@ -77,6 +78,10 @@ context:
   description: Project, inventory, organization, and execution environment inherited from setup.
   returned: always
   type: dict
+credential_mode:
+  description: Whether generated templates inherit credentials or prompt at launch.
+  returned: always
+  type: str
 templates:
   description: Reconciliation result for every managed job template.
   returned: always
@@ -93,7 +98,7 @@ copied_credential_types:
   type: list
   elements: str
 excluded_credentials:
-  description: Setup-only controller credentials not copied to generated templates.
+  description: Setup-only credentials not copied to generated templates.
   returned: always
   type: list
   elements: str

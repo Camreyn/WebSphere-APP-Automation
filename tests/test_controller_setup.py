@@ -127,15 +127,7 @@ def test_controller_setup_updates_once_then_is_idempotent() -> None:
     }
     definition = {
         "version": 1,
-        "excluded_credential_types": [
-            "Red Hat Ansible Automation Platform",
-            "Ansible Tower",
-        ],
-        "minimum_copied_credentials": 2,
-        "required_copied_credential_types": [
-            "Machine",
-            "WebSphere Administrative Credential",
-        ],
+        "credential_mode": "prompt",
         "templates": [
             {
                 "name": "WAS - Reboot Nodes by Wave",
@@ -145,6 +137,9 @@ def test_controller_setup_updates_once_then_is_idempotent() -> None:
                 "verbosity": 1,
                 "allow_simultaneous": False,
                 "ask_variables_on_launch": False,
+                "ask_credential_on_launch": True,
+                "ask_forks_on_launch": True,
+                "forks": 0,
                 "survey": survey,
             }
         ],
@@ -161,14 +156,20 @@ def test_controller_setup_updates_once_then_is_idempotent() -> None:
     first = controller.configure_controller_templates(api, setup_template, definition)
     assert first["changed"] is True
     assert first["templates"][0]["action"] == "updated"
-    assert first["templates"][0]["credentials_added"] == ["Production wsadmin"]
+    assert first["templates"][0]["credentials_added"] == []
     assert first["templates"][0]["credentials_removed"] == [
         "AAP self API",
+        "Production SSH",
         "Stale vault",
     ]
     assert first["templates"][0]["survey_changed"] is True
-    assert first["copied_credentials"] == ["Production SSH", "Production wsadmin"]
-    assert first["excluded_credentials"] == ["AAP self API"]
+    assert first["credential_mode"] == "prompt"
+    assert first["copied_credentials"] == []
+    assert first["excluded_credentials"] == [
+        "AAP self API",
+        "Production SSH",
+        "Production wsadmin",
+    ]
 
     second = controller.configure_controller_templates(api, setup_template, definition)
     assert second["changed"] is False

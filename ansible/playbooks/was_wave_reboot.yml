@@ -1,5 +1,5 @@
 ---
-- name: Build the two maintenance waves from inventory metadata
+- name: Validate the host-only maintenance inventory
   hosts: localhost
   gather_facts: false
   vars:
@@ -12,129 +12,233 @@
           - was_maintenance_inventory_hosts | length > 0
         fail_msg: >-
           The requested maintenance inventory group is empty or missing:
-          {{ was_maintenance_inventory_group }}
+          {{ was_maintenance_inventory_group }}. Add only the two-host cell
+          hostnames/IPs to that group; WebSphere topology is discovered live.
 
-    - name: Require each host to declare maintenance wave 1 or 2
+- name: Discover WebSphere profiles on every maintenance host
+  hosts: "{{ maintenance_inventory_group | default('was_nodes') }}"
+  gather_facts: false
+  tasks:
+    - name: Inspect registered and conventional WebSphere profiles
+      waslab.wasnd.topology_info:
+        install_roots: "{{ was_maintenance_install_roots | default(omit) }}"
+      become: true
+      register: was_local_topology
+
+    - name: Reject incomplete or ambiguous local topology
       ansible.builtin.assert:
         that:
-          - hostvars[was_maintenance_inventory_host].was_maintenance_wave is defined
-          - hostvars[was_maintenance_inventory_host].was_maintenance_wave | int in [1, 2]
-        fail_msg: >-
-          {{ was_maintenance_inventory_host }} must set was_maintenance_wave to 1 or 2.
-      loop: "{{ was_maintenance_inventory_hosts }}"
-      loop_control:
-        loop_var: was_maintenance_inventory_host
-
-    - name: Preflight every host before allowing the first disruptive task
-      ansible.builtin.assert:
-        that:
+          - was_local_topology.managed_profiles | length == 1
+          - was_local_topology.dmgr_profiles | length <= 1
+          - was_local_topology.managed_profiles[0].cell | length > 0
+          - was_local_topology.managed_profiles[0].node | length > 0
+          - was_local_topology.managed_profiles[0].owner | length > 0
           - >-
-            hostvars[was_maintenance_inventory_host].was_maintenance_allow_reboot
-            | default(was_maintenance_allow_reboot | default(false)) | bool
-          - >-
-            hostvars[was_maintenance_inventory_host].was_maintenance_dmgr_host
-            | default((groups.get('was_dmgr', []) | first) | default(''))
-            | length > 0
-          - >-
-            (hostvars[was_maintenance_inventory_host].was_maintenance_members
-             | default([]) | length > 0) or
+            (was_local_topology.dmgr_profiles | length == 0) or
             (
-              hostvars[was_maintenance_inventory_host].was_cluster_name is defined and
-              hostvars[was_maintenance_inventory_host].was_node_name is defined and
-              hostvars[was_maintenance_inventory_host].was_server_name is defined
-            )
-          - >-
-            not (
-              hostvars[was_maintenance_inventory_host].was_maintenance_require_health_checks
-              | default(true) | bool
-            ) or
-            (
-              hostvars[was_maintenance_inventory_host].was_maintenance_health_urls
-              | default([]) | length > 0
-            )
-          - >-
-            not (
-              hostvars[was_maintenance_inventory_host].was_maintenance_hosts_dmgr
-              | default(false) | bool
-            ) or
-            (
-              hostvars[was_maintenance_inventory_host].was_maintenance_wave | int == 2
-            )
-          - >-
-            not (was_maintenance_require_dmgr_on_wave_2 | default(true) | bool) or
-            (hostvars[was_maintenance_inventory_host].was_maintenance_wave | int != 2) or
-            (
-              hostvars[was_maintenance_inventory_host].was_maintenance_hosts_dmgr
-              | default(false) | bool
+              was_local_topology.dmgr_profiles[0].cell | length > 0 and
+              was_local_topology.dmgr_profiles[0].owner | length > 0 and
+              was_local_topology.dmgr_profiles[0].soap_port | int > 0
             )
         fail_msg: >-
-          {{ was_maintenance_inventory_host }} is not ready: authorize reboot,
-          identify its Dmgr/member, configure direct health URLs, and place any
-          co-located Dmgr host in wave 2. By default every wave-2 host must
-          explicitly declare was_maintenance_hosts_dmgr=true. No host has been
-          changed.
-      loop: "{{ was_maintenance_inventory_hosts }}"
-      loop_control:
-        loop_var: was_maintenance_inventory_host
+          {{ inventory_hostname }} must contain exactly one managed-node
+          profile and no more than one Dmgr profile. Cell, node, profile owner,
+          and any Dmgr SOAP port must be discoverable. No host was changed.
 
-    - name: Preflight the injected WebSphere credential before changing any host
+    - name: Group hosts that contain a deployment manager
+      ansible.builtin.group_by:
+        key: was_discovered_dmgrs
+      when: was_local_topology.dmgr_profiles | length == 1
+
+- name: Read live cell, cluster, member, and application state from every Dmgr
+  hosts: was_discovered_dmgrs
+  gather_facts: false
+  vars:
+    was_discovered_dmgr_profile: "{{ was_local_topology.dmgr_profiles | first }}"
+  tasks:
+    - name: Require the WebSphere credential selected at launch
       ansible.builtin.assert:
         that:
-          - >-
-            hostvars[was_maintenance_inventory_host].was_admin_user
-            | default(was_admin_user | default('')) | length > 0
-          - >-
-            hostvars[was_maintenance_inventory_host].was_admin_password
-            | default(was_admin_password | default('')) | length > 0
-        fail_msg: A WebSphere administrative credential is required.
+          - was_admin_user | default('') | length > 0
+          - was_admin_password | default('') | length > 0
+        fail_msg: >-
+          Select the WebSphere Administrative Credential in AAP's Credentials
+          launch step. It must inject was_admin_user and was_admin_password.
       no_log: true
+
+    - name: Discover live cell and cluster-member state
+      waslab.wasnd.cell_info:
+        install_root: "{{ was_discovered_dmgr_profile.install_root }}"
+        profile_name: "{{ was_discovered_dmgr_profile.name }}"
+        host: localhost
+        port: "{{ was_discovered_dmgr_profile.soap_port }}"
+        username: "{{ was_admin_user }}"
+        password: "{{ was_admin_password }}"
+      become: true
+      become_user: "{{ was_discovered_dmgr_profile.owner }}"
+      register: was_discovered_cell
+
+    - name: Capture runtime placement for every installed application
+      waslab.wasnd.application_info:
+        install_root: "{{ was_discovered_dmgr_profile.install_root }}"
+        profile_name: "{{ was_discovered_dmgr_profile.name }}"
+        host: localhost
+        port: "{{ was_discovered_dmgr_profile.soap_port }}"
+        username: "{{ was_admin_user }}"
+        password: "{{ was_admin_password }}"
+        name: "{{ was_discovered_application_name }}"
+      become: true
+      become_user: "{{ was_discovered_dmgr_profile.owner }}"
+      loop: "{{ was_discovered_cell.facts.applications | default([]) }}"
+      loop_control:
+        loop_var: was_discovered_application_name
+        label: "{{ was_discovered_application_name }}"
+      register: was_discovered_application_queries
+
+    - name: Retain the read-only Dmgr discovery result for central planning
+      ansible.builtin.set_fact:
+        was_discovered_cell_payload:
+          facts: "{{ was_discovered_cell.facts }}"
+          applications: >-
+            {{ was_discovered_application_queries.results | default([])
+               | map(attribute='application') | list }}
+
+- name: Build and authorize the automatic Node 2 then Node 1 plan
+  hosts: localhost
+  gather_facts: false
+  vars:
+    was_maintenance_inventory_group: "{{ maintenance_inventory_group | default('was_nodes') }}"
+    was_maintenance_inventory_hosts: "{{ groups.get(was_maintenance_inventory_group, []) }}"
+  tasks:
+    - name: Initialize the central discovery maps
+      ansible.builtin.set_fact:
+        was_discovered_topologies: {}
+        was_discovered_cells: {}
+
+    - name: Collect every host's local topology
+      ansible.builtin.set_fact:
+        was_discovered_topologies: >-
+          {{ was_discovered_topologies
+             | combine({was_discovered_host: hostvars[was_discovered_host].was_local_topology}) }}
       loop: "{{ was_maintenance_inventory_hosts }}"
       loop_control:
-        loop_var: was_maintenance_inventory_host
+        loop_var: was_discovered_host
 
-    - name: Create the in-memory wave groups
-      ansible.builtin.add_host:
-        name: "{{ was_maintenance_inventory_host }}"
-        groups: >-
-          was_maintenance_wave_{{
-          hostvars[was_maintenance_inventory_host].was_maintenance_wave | int }}
-      loop: "{{ was_maintenance_inventory_hosts }}"
+    - name: Collect every Dmgr's live cell state
+      ansible.builtin.set_fact:
+        was_discovered_cells: >-
+          {{ was_discovered_cells
+             | combine({was_discovered_host:
+                         hostvars[was_discovered_host].was_discovered_cell_payload}) }}
+      loop: "{{ groups.get('was_discovered_dmgrs', []) }}"
       loop_control:
-        loop_var: was_maintenance_inventory_host
-        label: >-
-          {{ was_maintenance_inventory_host }} -> wave {{
-          hostvars[was_maintenance_inventory_host].was_maintenance_wave | int }}
+        loop_var: was_discovered_host
 
-    - name: Require at least one host in both waves
+    - name: Correlate profiles with live cells and calculate both waves
+      waslab.wasnd.wave_plan:
+        topologies: "{{ was_discovered_topologies }}"
+        cells: "{{ was_discovered_cells }}"
+        require_two_node_cells: true
+      register: was_maintenance_plan
+
+    - name: Show the discovered cell pairs before maintenance
+      ansible.builtin.debug:
+        msg:
+          cells: "{{ was_maintenance_plan.plan.cells }}"
+          node_2_wave: "{{ was_maintenance_plan.plan.wave_1 }}"
+          node_1_dmgr_wave: "{{ was_maintenance_plan.plan.wave_2 }}"
+          required_forks: "{{ was_maintenance_plan.plan.recommended_forks }}"
+
+    - name: Require explicit reboot authorization after all read-only preflight
       ansible.builtin.assert:
         that:
-          - groups.get('was_maintenance_wave_1', []) | length > 0
-          - groups.get('was_maintenance_wave_2', []) | length > 0
-        fail_msg: Both maintenance waves must contain at least one host.
+          - was_maintenance_allow_reboot | default(false) | bool
+        fail_msg: >-
+          Discovery completed without changing a host. Relaunch with Authorize
+          operating-system reboots set to true to execute this exact plan.
 
-- name: Reboot every Node 2 application host concurrently while Dmgr stays online
+    - name: Require enough forks to run the larger wave concurrently
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_forks | default(5) | int >=
+            was_maintenance_plan.plan.recommended_forks | int
+        fail_msg: >-
+          Relaunch and set Forks to at least
+          {{ was_maintenance_plan.plan.recommended_forks }}. That is the number
+          of hosts in the larger wave and guarantees all Node 2 hosts, then all
+          Node 1 hosts, can run concurrently.
+
+    - name: Create the in-memory waves with discovered WebSphere settings
+      ansible.builtin.add_host:
+        name: "{{ was_planned_host.key }}"
+        groups: "was_maintenance_wave_{{ was_planned_host.value.wave }}"
+        was_maintenance_wave: "{{ was_planned_host.value.wave }}"
+        was_maintenance_cell_name: "{{ was_planned_host.value.cell }}"
+        was_maintenance_node_name: "{{ was_planned_host.value.node }}"
+        was_install_root: "{{ was_planned_host.value.node_install_root }}"
+        was_maintenance_node_profile_name: "{{ was_planned_host.value.node_profile_name }}"
+        was_maintenance_node_os_user: "{{ was_planned_host.value.node_os_user }}"
+        was_maintenance_dmgr_host: "{{ was_planned_host.value.dmgr_host }}"
+        was_maintenance_dmgr_install_root: "{{ was_planned_host.value.dmgr_install_root }}"
+        was_maintenance_dmgr_profile_name: "{{ was_planned_host.value.dmgr_profile_name }}"
+        was_maintenance_dmgr_os_user: "{{ was_planned_host.value.dmgr_os_user }}"
+        was_maintenance_dmgr_soap_host: localhost
+        was_maintenance_dmgr_soap_port: "{{ was_planned_host.value.dmgr_soap_port }}"
+        was_maintenance_hosts_dmgr: "{{ was_planned_host.value.hosts_dmgr }}"
+        was_maintenance_members: "{{ was_planned_host.value.members }}"
+        was_maintenance_expected_applications: >-
+          {{ was_planned_host.value.expected_applications }}
+      loop: "{{ was_maintenance_plan.plan.hosts | dict2items }}"
+      loop_control:
+        loop_var: was_planned_host
+        label: >-
+          {{ was_planned_host.key }} -> wave {{ was_planned_host.value.wave }}
+
+- name: Reboot every Node 2 host concurrently while its Dmgr remains online
   hosts: was_maintenance_wave_1
   gather_facts: false
   strategy: free
   roles:
     - role: waslab.wasnd.wave_reboot
 
-- name: Reboot every Node 1 and co-located Dmgr host after Node 2 recovered
-  hosts: was_maintenance_wave_2
+- name: Require complete Node 2 recovery before starting Node 1
+  hosts: localhost
   gather_facts: false
-  strategy: free
-  pre_tasks:
-    - name: Block Node 1 unless every Node 2 host recovered in this run
+  tasks:
+    - name: Verify every Node 2 host completed all recovery gates
       ansible.builtin.assert:
         that:
           - >-
-            hostvars[was_maintenance_wave_1_host].was_maintenance_host_recovered
+            hostvars[was_recovered_host].was_maintenance_host_recovered
             | default(false) | bool
         fail_msg: >-
-          Node 1 is blocked because {{ was_maintenance_wave_1_host }} did not
-          complete its stop, reboot, start, and health sequence.
+          {{ was_recovered_host }} did not complete runtime recovery. No Node 1
+          host will be changed.
       loop: "{{ groups.get('was_maintenance_wave_1', []) }}"
       loop_control:
-        loop_var: was_maintenance_wave_1_host
+        loop_var: was_recovered_host
+
+- name: Reboot every Node 1 host and its co-located Dmgr concurrently
+  hosts: was_maintenance_wave_2
+  gather_facts: false
+  strategy: free
   roles:
     - role: waslab.wasnd.wave_reboot
+
+- name: Confirm the complete maintenance plan recovered
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Verify every discovered host passed all runtime gates
+      ansible.builtin.assert:
+        that:
+          - >-
+            hostvars[was_recovered_host].was_maintenance_host_recovered
+            | default(false) | bool
+        fail_msg: "{{ was_recovered_host }} did not complete runtime recovery."
+      loop: >-
+        {{ groups.get('was_maintenance_wave_1', [])
+           + groups.get('was_maintenance_wave_2', []) }}
+      loop_control:
+        loop_var: was_recovered_host
