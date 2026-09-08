@@ -30,6 +30,9 @@ or wave variables per server. The operational playbook discovers them from the
 local profile files and live Dmgr. If WebSphere is outside the standard install
 roots, define one inventory-group variable named
 `was_maintenance_install_roots` containing the candidate root paths.
+Standard discovery includes conventional WAS roots plus versioned
+`/opt/IBM/Workflow/*`, `/opt/ibm/Workflow/*`, `/opt/IBM/BPM/*`, and
+`/opt/ibm/BPM/*` installations.
 
 ## 2. Import the Project
 
@@ -114,6 +117,9 @@ Before changing a host, the job:
 
 - finds the registered Dmgr and managed-node profiles, install roots, profile
   names, owning OS users, cells, nodes, local servers, and Dmgr SOAP ports;
+- reads `versionInfo.sh` and the profile-local `wsadmin.sh` runtime to identify
+  WAS, legacy IBM BPM, or BAW, the underlying WAS version, and Jython 2.1 or
+  2.7 without inventory flags;
 - queries every Dmgr for live clusters, members, member states, applications,
   and application runtime placement;
 - requires exactly two managed hosts per cell and exactly one co-located Dmgr;
@@ -131,6 +137,10 @@ The default health gate is live WebSphere member state plus restoration of each
 pre-maintenance application runtime instance. Optional direct HTTP checks can
 still be supplied as group/host variables in `was_maintenance_health_urls`; set
 `was_maintenance_require_health_checks: true` only when those URLs are required.
+For BAW/BPM this automatically covers its WebSphere cluster members and all
+running deployed application MBeans. It does not claim that a process engine,
+database-dependent workflow, or business transaction completed; use optional
+HTTP checks when that deeper functional proof is required.
 
 ## Supported topology and safety boundary
 
@@ -140,6 +150,12 @@ Automatic pairing intentionally fails closed unless each selected cell has:
 - exactly one Dmgr profile, co-located with the host designated Node 1;
 - clustered managed servers visible and started in the live Dmgr;
 - profile paths readable under privilege escalation.
+
+The collection's built-in wsadmin bridge deliberately uses the Jython 2.1
+language subset, so the same job supports the Jython 2.1 runtime shipped with
+WAS 8.5.5 and the Jython 2.7 runtime normally used by WAS 9. The detected
+generation and product family appear in the read-only plan. Any other Jython
+generation or unidentified product fails preflight before shutdown.
 
 If a cell uses a separate Dmgr host, more than two managed nodes, multiple
 managed profiles per OS host, or another layout, do not use this two-wave job

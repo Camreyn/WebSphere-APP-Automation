@@ -18,7 +18,12 @@ except ImportError:  # pragma: no cover - Ansible runs this module on Linux host
 DEFAULT_INSTALL_ROOTS = (
     "/opt/WebSphere/AppServers",
     "/opt/IBM/WebSphere/AppServer",
+    "/opt/ibm/WebSphere/AppServer",
     "/usr/IBM/WebSphere/AppServer",
+    "/opt/IBM/Workflow/*",
+    "/opt/ibm/Workflow/*",
+    "/opt/IBM/BPM/*",
+    "/opt/ibm/BPM/*",
 )
 
 

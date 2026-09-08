@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import pathlib
+import re
 
 import pytest
 
@@ -66,6 +67,102 @@ def test_jython_bridge_has_supported_operations_and_machine_result_prefix() -> N
         assert f'"{operation}": operation_{operation}' in jython.BRIDGE
     assert "ANSIBLE_WAS_RESULT=" in jython.BRIDGE
     assert "-defaultbinding.virtual.host" in jython.BRIDGE
+    assert "runtime = runtime_info()" in jython.BRIDGE
+    assert 'result["wsadmin_runtime"] = runtime' in jython.BRIDGE
+
+
+def test_jython_bridge_stays_in_the_was_855_language_subset() -> None:
+    bridge = load_utility("_jython").BRIDGE
+    for incompatible in (
+        "from __future__ import print_function",
+        "import json",
+        "bool(",
+        "sorted(",
+        "with open",
+        "except Exception as",
+        "lambda",
+    ):
+        assert incompatible not in bridge
+    assert "except Exception, exc:" in bridge
+    assert "print RESULT_PREFIX + repr(value)" in bridge
+    assert not re.search(r"\b(?:True|False)\b", bridge)
+    assert not any(
+        re.search(r"\S+\s+if\s+.+\s+else\s+", line)
+        for line in bridge.splitlines()
+    )
+    assert bridge.index("runtime = runtime_info()") < bridge.index(
+        "result = handlers[operation](payload)"
+    )
+
+
+def test_wsadmin_codec_round_trips_values_without_modern_jython_literals() -> None:
+    codec = load_utility("_wsadmin_codec")
+    payload = {
+        "check_mode": True,
+        "disabled": False,
+        "names": ["orders", "caf\N{LATIN SMALL LETTER E WITH ACUTE}"],
+        "path": "/opt/IBM/it's safe",
+        "escaped": "C:\\IBM\\O'Brien\nnext",
+        "value": None,
+    }
+    encoded = codec.jython21_literal(payload)
+
+    assert "True" not in encoded
+    assert "False" not in encoded
+    assert "\N{LATIN SMALL LETTER E WITH ACUTE}" not in encoded
+    decoded = codec.parse_wsadmin_result(encoded)
+    assert decoded == {
+        "check_mode": 1,
+        "disabled": 0,
+        "names": ["orders", "caf\N{LATIN SMALL LETTER E WITH ACUTE}"],
+        "path": "/opt/IBM/it's safe",
+        "escaped": "C:\\IBM\\O'Brien\nnext",
+        "value": None,
+    }
+    assert codec.parse_wsadmin_result("{'changed': 0}")["changed"] is False
+    assert codec.parse_wsadmin_result('{"changed": true}')["changed"] is True
+
+
+def test_product_discovery_distinguishes_was9_and_baw_on_was855() -> None:
+    product = load_utility("_product")
+    was9 = """
+Installed Product
+Name                  IBM WebSphere Application Server Network Deployment
+Version               9.0.5.28
+ID                    ND
+"""
+    baw = """
+Installed Product
+Name                  IBM WebSphere Application Server Network Deployment
+Version               8.5.5.23
+ID                    ND
+Installed Product
+Name                  IBM Business Automation Workflow Enterprise
+Version               24.0.1.0
+ID                    BPMPC
+"""
+    bpm = """
+Installed Product
+Name                  IBM WebSphere Application Server Network Deployment
+Version               8.5.5.18
+ID                    ND
+Installed Product
+Name                  IBM Business Process Manager Advanced
+Version               8.6.0.0
+ID                    BPMPC
+"""
+
+    was9_facts = product.product_facts(was9)
+    baw_facts = product.product_facts(baw)
+    assert was9_facts["family"] == "was"
+    assert was9_facts["version"] == "9.0.5.28"
+    assert was9_facts["edition"] == "Network Deployment"
+    assert baw_facts["family"] == "baw"
+    assert baw_facts["version"] == "8.5.5.23"
+    assert baw_facts["workflow_version"] == "24.0.1.0"
+    assert len(baw_facts["products"]) == 2
+    assert product.product_facts(bpm)["family"] == "bpm"
+    assert product.product_facts("")["family"] == "unknown"
 
 
 def test_topology_discovery_reads_profiles_without_inventory_metadata(
@@ -93,6 +190,7 @@ def test_topology_discovery_reads_profiles_without_inventory_metadata(
     assert topology.parse_profile_names("[Dmgr01, AppSrv01]\n") == [
         "Dmgr01", "AppSrv01"
     ]
+    assert "/opt/ibm/Workflow/*" in topology.DEFAULT_INSTALL_ROOTS
 
 
 def sample_discovered_wave_inputs() -> tuple[dict, dict]:
@@ -127,6 +225,17 @@ def sample_discovered_wave_inputs() -> tuple[dict, dict]:
         cells[node_1_host] = {
             "facts": {
                 "cell": cell,
+                "product": {
+                    "edition": "Network Deployment",
+                    "version": "8.5.5.23" if app_number == 1 else "9.0.5.28",
+                    "family": "baw" if app_number == 1 else "was",
+                    "family_name": (
+                        "IBM Business Automation Workflow Enterprise"
+                        if app_number == 1
+                        else "IBM WebSphere Application Server Network Deployment"
+                    ),
+                    "workflow_version": "24.0.1.0" if app_number == 1 else "",
+                },
                 "clusters": [{
                     "name": cluster,
                     "members": [
@@ -134,6 +243,12 @@ def sample_discovered_wave_inputs() -> tuple[dict, dict]:
                         {"node": node_2, "name": "server2", "state": "STARTED"},
                     ],
                 }],
+            },
+            "wsadmin_runtime": {
+                "implementation": "Jython",
+                "generation": "2.1" if app_number == 1 else "2.7",
+                "version": "2.1" if app_number == 1 else "2.7.3",
+                "supported": 1,
             },
             "applications": [{
                 "name": f"orders{app_number}",
@@ -166,6 +281,10 @@ def test_wave_plan_derives_pairs_members_apps_and_parallelism() -> None:
     assert plan["hosts"]["app1_node2"]["expected_applications"] == [{
         "name": "orders1", "node": "App1Node02", "server": "server2"
     }]
+    assert plan["cells"][0]["platform"]["family"] == "baw"
+    assert plan["cells"][0]["platform"]["jython_generation"] == "2.1"
+    assert plan["cells"][1]["platform"]["family"] == "was"
+    assert plan["cells"][1]["platform"]["jython_generation"] == "2.7"
 
 
 def test_wave_plan_fails_before_changes_for_incomplete_live_topology() -> None:
@@ -178,3 +297,12 @@ def test_wave_plan_fails_before_changes_for_incomplete_live_topology() -> None:
 
     with pytest.raises(wave_plan.WavePlanError, match="missing from the maintenance pair"):
         wave_plan.build_wave_plan(topologies, unsafe_cells)
+
+
+def test_wave_plan_rejects_an_unrecognized_wsadmin_runtime_before_changes() -> None:
+    wave_plan = load_utility("_wave_plan")
+    topologies, cells = sample_discovered_wave_inputs()
+    cells["app1_node1"]["wsadmin_runtime"]["generation"] = "2.5"
+
+    with pytest.raises(wave_plan.WavePlanError, match="unsupported Jython generation"):
+        wave_plan.build_wave_plan(topologies, cells)

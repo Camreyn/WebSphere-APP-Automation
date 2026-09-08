@@ -480,6 +480,12 @@ them. The Dmgr host becomes Node 1/wave 2 automatically; the partner becomes
 Node 2/wave 1. It also records every currently running application instance so
 the same node/server placement must return after reboot.
 
+Discovery also reads `versionInfo.sh` and asks the profile-local wsadmin runtime
+for its Jython generation. It classifies plain WAS, legacy IBM BPM, and BAW
+without per-server version flags. The built-in bridge uses syntax shared by
+Jython 2.1 (WAS 8.5.5) and Jython 2.7 (the normal WAS 9 runtime); any unknown
+product or untested Jython generation is rejected during read-only preflight.
+
 Authorize the disruptive action only for the intended run:
 
 ```bash
@@ -495,6 +501,9 @@ SOAP before using wsadmin. Optional direct URLs in
 default WebSphere runtime-health policy. Configure AAP Forks to at least the
 number of hosts in the larger wave. Preflight fails before shutdown when the
 topology is ambiguous, a member is down, or the fork count is insufficient.
+On BAW/BPM, this policy verifies WebSphere members and every application MBean
+that was running on the node before maintenance. Add an HTTP health endpoint if
+the change requires proof of process-engine, database, or transaction health.
 Integrate load-balancer drain and return-to-service controls around the role
 when the production load balancer does not remove a stopped member automatically.
 

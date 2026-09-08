@@ -118,9 +118,11 @@ two-wave operating-system reboot, and log-collection roles. The wave reboot
 runs every Node 2 application host concurrently before Node 1, keeping the
 co-located Node 1 Dmgr available for the first wave. It discovers pairs,
 profiles, cells, cluster members, applications, Dmgr placement, health state,
-and waves from a host-only inventory. It requires explicit reboot authorization
-and restores every pre-maintenance WebSphere runtime; direct HTTP checks remain
-optional. Destructive states require `allow_destructive: true`.
+product family, WAS/Jython version, and waves from a host-only inventory. Its
+built-in bridge supports the Jython 2.1 and 2.7 generations used by WAS 8.5.5
+and WAS 9, including legacy BPM/BAW installations. It requires explicit reboot
+authorization and restores every pre-maintenance WebSphere runtime; direct HTTP
+checks remain optional. Destructive states require `allow_destructive: true`.
 
 ```powershell
 .\lab.ps1 collection-test

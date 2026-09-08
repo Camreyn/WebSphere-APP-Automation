@@ -99,6 +99,7 @@
       ansible.builtin.set_fact:
         was_discovered_cell_payload:
           facts: "{{ was_discovered_cell.facts }}"
+          wsadmin_runtime: "{{ was_discovered_cell.wsadmin_runtime }}"
           applications: >-
             {{ was_discovered_application_queries.results | default([])
                | map(attribute='application') | list }}
@@ -186,6 +187,7 @@
         was_maintenance_dmgr_soap_host: localhost
         was_maintenance_dmgr_soap_port: "{{ was_planned_host.value.dmgr_soap_port }}"
         was_maintenance_hosts_dmgr: "{{ was_planned_host.value.hosts_dmgr }}"
+        was_maintenance_platform: "{{ was_planned_host.value.platform }}"
         was_maintenance_members: "{{ was_planned_host.value.members }}"
         was_maintenance_expected_applications: >-
           {{ was_planned_host.value.expected_applications }}

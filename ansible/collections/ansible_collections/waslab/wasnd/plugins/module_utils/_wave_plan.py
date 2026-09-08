@@ -9,6 +9,10 @@ class WavePlanError(Exception):
     pass
 
 
+SUPPORTED_JYTHON_GENERATIONS = ("2.1", "2.7")
+SUPPORTED_PRODUCT_FAMILIES = ("was", "bpm", "baw")
+
+
 def require_single(items, label):
     if len(items) != 1:
         raise WavePlanError("%s: expected exactly one, discovered %s" % (label, len(items)))
@@ -18,6 +22,36 @@ def require_single(items, label):
 def member_is_started(member):
     state = str(member.get("state", "")).upper()
     return state in ("STARTED", "RUNNING")
+
+
+def detected_platform(cell_name, facts, cell_data):
+    product = facts.get("product", {})
+    family = str(product.get("family", "")).lower()
+    if family not in SUPPORTED_PRODUCT_FAMILIES:
+        raise WavePlanError(
+            "%s: versionInfo did not identify a supported WAS, BPM, or BAW product"
+            % cell_name
+        )
+
+    runtime = cell_data.get("wsadmin_runtime", {})
+    generation = str(runtime.get("generation", ""))
+    if generation not in SUPPORTED_JYTHON_GENERATIONS:
+        raise WavePlanError(
+            "%s: profile-local wsadmin reported unsupported Jython generation %r; "
+            "tested generations are %s"
+            % (cell_name, generation or "unknown", ", ".join(SUPPORTED_JYTHON_GENERATIONS))
+        )
+
+    return {
+        "family": family,
+        "family_name": product.get("family_name", ""),
+        "websphere_edition": product.get("edition", "unknown"),
+        "websphere_version": product.get("version", "unknown"),
+        "workflow_version": product.get("workflow_version", ""),
+        "jython_generation": generation,
+        "jython_version": runtime.get("version", ""),
+        "health_scope": "WebSphere members and pre-maintenance application runtimes",
+    }
 
 
 def build_wave_plan(topologies, cells, require_two_node_cells=True):
@@ -94,6 +128,7 @@ def build_wave_plan(topologies, cells, require_two_node_cells=True):
                 "%s: local profile cell differs from live Dmgr cell %r"
                 % (dmgr_host, facts.get("cell"))
             )
+        platform = detected_platform(cell_name, facts, cell_data)
 
         all_members = []
         for cluster in facts.get("clusters", []):
@@ -184,6 +219,7 @@ def build_wave_plan(topologies, cells, require_two_node_cells=True):
                 "dmgr_os_user": dmgr_profile["owner"],
                 "dmgr_soap_port": dmgr_profile["soap_port"],
                 "hosts_dmgr": host == dmgr_host,
+                "platform": platform,
                 "members": [
                     {"cluster": item["cluster"], "node": item["node"], "name": item["name"]}
                     for item in local_members
@@ -201,6 +237,7 @@ def build_wave_plan(topologies, cells, require_two_node_cells=True):
                     "",
                 ),
                 "clusters": sorted(set(item["cluster"] for item in all_members)),
+                "platform": platform,
             }
         )
 

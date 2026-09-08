@@ -4,7 +4,6 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-import json
 import os
 import shutil
 import tempfile
@@ -14,6 +13,10 @@ from ansible_collections.waslab.wasnd.plugins.module_utils._common import (
     redact,
     run_checked,
     temporary_soap_properties,
+)
+from ansible_collections.waslab.wasnd.plugins.module_utils._wsadmin_codec import (
+    jython21_literal,
+    parse_wsadmin_result,
 )
 
 
@@ -70,9 +73,13 @@ def run_wsadmin_script(module, script_content=None, script_path=None, args=None)
                 )
             if line.startswith(RESULT_PREFIX):
                 try:
-                    result = json.loads(line[len(RESULT_PREFIX):])
+                    result = parse_wsadmin_result(line[len(RESULT_PREFIX):])
                 except ValueError as exc:
-                    module.fail_json(msg="wsadmin returned invalid result JSON", error=str(exc), stdout=stdout)
+                    module.fail_json(
+                        msg="wsadmin returned an invalid collection result",
+                        error=str(exc),
+                        stdout=stdout,
+                    )
 
         return {
             "rc": rc,
@@ -88,8 +95,8 @@ def run_wsadmin_script(module, script_content=None, script_path=None, args=None)
 def run_wsadmin_operation(module, bridge, operation, payload):
     workdir = tempfile.mkdtemp(prefix="waslab-payload-", dir=module.tmpdir)
     try:
-        payload_path = os.path.join(workdir, "payload.json")
-        _write_private(payload_path, json.dumps(payload))
+        payload_path = os.path.join(workdir, "payload.literal")
+        _write_private(payload_path, jython21_literal(payload))
         return run_wsadmin_script(
             module,
             script_content=bridge,

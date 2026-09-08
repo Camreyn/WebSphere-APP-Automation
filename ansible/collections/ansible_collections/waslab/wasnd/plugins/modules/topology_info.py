@@ -23,7 +23,12 @@ options:
     default:
       - /opt/WebSphere/AppServers
       - /opt/IBM/WebSphere/AppServer
+      - /opt/ibm/WebSphere/AppServer
       - /usr/IBM/WebSphere/AppServer
+      - /opt/IBM/Workflow/*
+      - /opt/ibm/Workflow/*
+      - /opt/IBM/BPM/*
+      - /opt/ibm/BPM/*
 author:
   - WAS ND Lab Maintainers (@waslab)
 '''

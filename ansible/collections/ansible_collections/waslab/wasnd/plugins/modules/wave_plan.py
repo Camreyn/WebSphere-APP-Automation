@@ -14,6 +14,8 @@ description:
   - Correlates local managed-node and Dmgr profiles with live wsadmin cell data.
   - Identifies each two-host cell pair, places the non-Dmgr host in wave 1,
     and places the co-located Dmgr host in wave 2.
+  - Records the automatically detected WAS, BPM, or BAW family and accepts only
+    tested Jython 2.1 or 2.7 wsadmin runtimes.
   - Fails before maintenance when topology is incomplete or ambiguous.
 options:
   topologies:
